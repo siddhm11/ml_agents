@@ -1,0 +1,9 @@
+langgraph 
+langchain-groq 
+pandas 
+scikit-learn 
+numpy 
+seaborn 
+matplotlib
+langchain-core 
+typing-extensions
