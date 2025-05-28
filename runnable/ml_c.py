@@ -104,6 +104,7 @@ class AgentState(TypedDict):
     preprocessing_steps: List[str] = field(default_factory=list)
     recommended_algorithms: List[str] = field(default_factory=list)
     trained_models: Dict[str, Any] = field(default_factory=dict)
+    preprocessing_pipeline: Dict[str, Any] = field(default_factory=dict)
     best_model: Dict[str, Any] = field(default_factory=dict)
     evaluation_results: Dict[str, Any] = field(default_factory=dict)
     final_recommendations: str = ""
@@ -586,7 +587,9 @@ class CSVMLAgent:
             if not algorithms:
                 logger.warning(f"No algorithms parsed from LLM response. Using defaults for {state['problem_type']}")
                 algorithms = default_algorithms
-            
+            elif len(algorithms) < 2:
+                logger.warning(f"Only {len(algorithms)} algorithms found. Adding defaults.")
+                algorithms.extend([alg for alg in default_algorithms if alg not in algorithms])
             # Limit to top 3-4 algorithms to avoid memory issues
             algorithms = algorithms[:4]
             
@@ -660,22 +663,39 @@ class CSVMLAgent:
         logger.info("Training ML models")
         
         if state['raw_data'] is None:
+            state['error_messages'].append("No data available for training")
             return state
-        
+
+        if not state['feature_columns'] or not state['target_column']:
+            state['error_messages'].append("Feature and target columns not set")
+            return state
+
         try:
             df = state['raw_data'].copy()
             
             # Prepare features and target
+            logger.info(f"Feature columns: {state['feature_columns']}")
+            logger.info(f"Target column: {state['target_column']}")
+            logger.info(f"Available columns: {list(df.columns)}")
+
+            # Prepare features and target
             X = df[state['feature_columns']]
             y = df[state['target_column']] if state['target_column'] in df.columns else None
-            
+
+            logger.info(f"X shape: {X.shape}, y shape: {len(y) if y is not None else 'None'}")
             if y is None and state['problem_type'] != 'clustering':
                 state['error_messages'].append("Target column not found for supervised learning")
                 return state
             
             # Preprocessing
-            X_processed = self._preprocess_features(X, state['preprocessing_steps'])
-            
+            try:
+                X_processed = self._preprocess_features(X, state['preprocessing_steps'])
+                logger.info(f"Preprocessing completed. Shape: {X_processed.shape}")
+            except Exception as e:
+                logger.error(f"Preprocessing failed: {e}")
+                state['error_messages'].append(f"Preprocessing failed: {str(e)}")
+                return state        
+
             if state['problem_type'] in ['classification', 'regression']:
                 # Encode target for classification
                 if state['problem_type'] == 'classification' and y.dtype == 'object':
@@ -690,10 +710,14 @@ class CSVMLAgent:
                 # Train models
                 models = self._get_model_instances(state['recommended_algorithms'])
                 trained_models = {}
+                if 'trained_models' not in state:
+                    state['trained_models'] = {}
                 
                 for name, model in models.items():
                     try:
+                        logger.info(f"Training {name}...")
                         model.fit(X_train, y_train)
+                        logger.info(f"Successfully trained {name}")
                         y_pred = model.predict(X_test)
                         
                         # Calculate metrics
@@ -717,16 +741,27 @@ class CSVMLAgent:
                             'predictions': y_pred.tolist()
                         }
                         
+                        # ADD THIS: Log each model's performance immediately
+                        logger.info(f"✅ {name} Training Complete:")
+                        for metric, value in metrics.items():
+                            if isinstance(value, float):
+                                logger.info(f"   {metric.upper()}: {value:.4f}")
+                            else:
+                                logger.info(f"   {metric.upper()}: {value}")
+                        logger.info("")  # Add spacing
+
                     except Exception as e:
                         logger.error(f"Failed to train {name}: {e}")
                 
                 state['trained_models'] = trained_models
                 
                 # Find best model
+                # Find best model
                 if trained_models:
+                    logger.info(f"Selecting best from {len(trained_models)} trained models")
                     if state['problem_type'] == 'classification':
                         best_model_name = max(trained_models.keys(), 
-                                            key=lambda x: trained_models[x]['metrics']['accuracy'])
+                                            key=lambda x: trained_models[x]['metrics'].get('accuracy', 0))
                     else:
                         best_model_name = min(trained_models.keys(), 
                                             key=lambda x: trained_models[x]['metrics']['mse'])
@@ -969,17 +1004,20 @@ class CSVMLAgent:
             result = await self.graph.ainvoke(initial_state)
             
             # Prepare results
+            # In analyze_csv method, modify the analysis_results:
             analysis_results = {
                 'csv_path': result['csv_path'],
                 'data_shape': result['data_info'].get('shape', None),
                 'problem_type': result['problem_type'],
                 'target_column': result['target_column'],
                 'feature_columns': result['feature_columns'],
+                'all_models': result['trained_models'],  # ADD THIS LINE
                 'best_model': result['best_model'],
                 'model_performance': result['evaluation_results'],
                 'recommendations': result['final_recommendations'],
                 'errors': result['error_messages']
             }
+
             
             logger.info("CSV analysis completed successfully")
             return analysis_results
@@ -1113,6 +1151,44 @@ class CSVMLAgent:
         logger.info("ANALYSIS COMPLETE")
         logger.info("="*60)
 
+    def compare_all_models(self, results: Dict[str, Any]):
+        """Display detailed comparison of all trained models"""
+        all_models = results.get('all_models', {})
+        if not all_models:
+            print("No models found for comparison")
+            return
+        
+        print("\n🔍 DETAILED MODEL COMPARISON")
+        print("="*60)
+        
+        # Create comparison table
+        if results['problem_type'] == 'classification':
+            metrics_to_show = ['accuracy', 'precision', 'recall', 'f1']
+        else:  # regression
+            metrics_to_show = ['mse', 'rmse', 'r2']
+        
+        # Print header
+        print(f"{'Model':<25}", end="")
+        for metric in metrics_to_show:
+            print(f"{metric.upper():<12}", end="")
+        print()
+        print("-" * 60)
+        
+        # Print each model's metrics
+        for model_name, model_data in all_models.items():
+            print(f"{model_name:<25}", end="")
+            model_metrics = model_data.get('metrics', {})
+            for metric in metrics_to_show:
+                value = model_metrics.get(metric, 'N/A')
+                if isinstance(value, float):
+                    print(f"{value:<12.4f}", end="")
+                else:
+                    print(f"{str(value):<12}", end="")
+            print()
+        
+        print("="*60)
+
+
 # Example usage and testing functions
 async def main():
     """Example usage of the CSV ML Agent"""
@@ -1121,7 +1197,7 @@ async def main():
     agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/ai_dev_productivity.csv"
+    csv_file_path = "runnable/bitcoin_downsampled_time.csv"
     
     try:
         # Analyze CSV and build ML model
@@ -1151,6 +1227,26 @@ async def main():
                 else:
                     print(f"   {metric.upper()}: {value}")
         
+        # In main() function, after printing best model results, ADD:
+        if results.get('all_models'):
+            print(f"\n📊 ALL MODEL RESULTS:")
+            print("="*50)
+            
+            for model_name, model_data in results['all_models'].items():
+                print(f"\n🔧 {model_name}:")
+                model_metrics = model_data.get('metrics', {})
+                for metric, value in model_metrics.items():
+                    if isinstance(value, float):
+                        print(f"   {metric.upper()}: {value:.4f}")
+                    else:
+                        print(f"   {metric.upper()}: {value}")
+            
+            print("\n" + "="*50)
+
+        # Compare all models
+        agent.compare_all_models(results)
+
+        
         print(f"\n💡 Recommendations:")
         print(results['recommendations'])
         
@@ -1160,8 +1256,8 @@ async def main():
         
         # Save the best model
         if results['best_model']:
-            agent.save_model(results['best_model'], "best_model.joblib")
-            print(f"💾 Best model saved to: best_model.joblib")
+            agent.save_model(results['best_model'], "runnavle/best_model.joblib")
+            print(f"💾 Best model saved to: runnable/best_model.joblib")
         
         if results['errors']:
             print(f"\n⚠️  Warnings/Errors:")
@@ -1224,46 +1320,3 @@ if __name__ == "__main__":
     # Run the analysis
     asyncio.run(main())
     
-    print("\n" + "="*50)
-    print("USAGE INSTRUCTIONS")
-    print("="*50)
-    print("1. Replace 'your_groq_api_key_here' with your actual Groq API key")
-    print("2. Replace 'your_dataset.csv' with your actual CSV file path")
-    print("3. Run: python csv_ml_agent.py")
-    print("4. Check the generated HTML report and saved model files")
-    print("5. Use ModelPredictor class to make predictions on new data")
-    print("\n🚀 The agent will automatically:")
-    print("   • Detect your CSV structure and encoding")
-    print("   • Analyze data quality and patterns using LLM")
-    print("   • Determine the optimal ML problem type")
-    print("   • Recommend and test multiple algorithms")
-    print("   • Build the best performing model")
-    print("   • Generate comprehensive analysis report")
-    print("   • Provide actionable recommendations")
-    
-    print("\n📊 Supported Problem Types:")
-    print("   • Classification (binary and multi-class)")
-    print("   • Regression (continuous target prediction)")
-    print("   • Clustering (unsupervised pattern discovery)")
-    
-    print("\n🔧 Features:")
-    print("   • Automatic data preprocessing")
-    print("   • Multiple algorithm comparison")
-    print("   • LLM-powered intelligent decision making")
-    print("   • Comprehensive performance evaluation")
-    print("   • Model persistence and deployment utilities")
-    print("   • Detailed HTML reporting")
-    print("   • Error handling and recovery")
-    
-    print("\n⚠️  Requirements:")
-    print("   • pip install langgraph groq pandas scikit-learn matplotlib seaborn")
-    print("   • Valid Groq API key for LLM functionality")
-    print("   • CSV file with proper structure")
-    
-    print("\n💡 Pro Tips:")
-    print("   • Ensure your CSV has a clear target column for supervised learning")
-    print("   • Clean column names work better (no special characters)")
-    print("   • Larger datasets (>1000 rows) generally produce better models")
-    print("   • The agent works best with mixed data types (numerical + categorical)")
-    
-    print("\nHappy ML modeling! 🎉")
