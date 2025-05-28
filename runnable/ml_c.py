@@ -53,22 +53,33 @@ class LLMClient:
                 logger.warning(f"Failed to initialize Groq client: {e}")
     
     async def get_llm_response(self, prompt: str, temperature: float = 0.1) -> str:
-        """Get response from LLM with error handling"""
+        """Get response from LLM with improved error handling and rate limiting"""
         if self.groq_client:
-            try:
-                response = self.groq_client.chat.completions.create(
-                    messages=[{"role": "user", "content": prompt}],
-                    model="deepseek-r1-distill-llama-70b",
-                    temperature=temperature,
-                    max_tokens=4000
-                )
-                return response.choices[0].message.content
-            except Exception as e:
-                logger.error(f"Groq API error: {e}")
-                return self._fallback_response(prompt)
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # Add delay to avoid rate limiting
+                    await asyncio.sleep(2)  # Increased delay
+                    
+                    response = self.groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="deepseek-r1-distill-llama-70b",
+                        temperature=temperature,
+                        max_tokens=4000  # Reduced to avoid issues
+                    )
+                    return response.choices[0].message.content
+                    
+                except Exception as e:
+                    logger.error(f"Groq API error (attempt {attempt + 1}): {e}")
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5  # Exponential backoff
+                        logger.info(f"Waiting {wait_time} seconds before retry...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error("All API attempts failed, using fallback")
+                        return self._fallback_response(prompt)
         else:
             return self._fallback_response(prompt)
-    
     def _fallback_response(self, prompt: str) -> str:
         """Fallback response when LLM is not available"""
         if "problem_type" in prompt.lower():
@@ -273,7 +284,7 @@ class CSVMLAgent:
         return state
     
     async def problem_identification_node(self, state: AgentState) -> AgentState:
-        """LLM determines the ML problem type"""
+        """LLM determines the ML problem type with improved JSON parsing"""
         logger.info("Identifying ML problem type using LLM")
         
         if not state['data_info']:
@@ -294,7 +305,7 @@ class CSVMLAgent:
         3. Feature Columns: which columns should be used as features
         4. Reasoning: why you chose this problem type
         
-        Respond with JSON format:
+        IMPORTANT: Respond ONLY with valid JSON in this exact format:
         {{
             "problem_type": "classification/regression/clustering",
             "target_column": "column_name",
@@ -305,68 +316,149 @@ class CSVMLAgent:
         
         try:
             response_str = await self.llm_client.get_llm_response(prompt)
-            response_json = json.loads(response_str) # Attempt to parse the full JSON
-
-            problem_type = response_json.get("problem_type", "classification") # Default if not found
-            target_column = response_json.get("target_column")
-            feature_columns = response_json.get("feature_columns")
-
-            columns = state['data_info']['columns']
-
-            if not target_column or target_column not in columns:
-                logger.warning(f"LLM did not suggest a valid target column or it's not in the dataset. Falling back.")
-                # Fallback logic (e.g., user input, heuristics, or last column as a last resort)
-                # For now, let's demonstrate a more robust fallback than just the last column if needed
-                # Or, you might want to raise an error or ask the user
-                if 'median_house_value' in columns: # Specific heuristic for this known case
-                    target_column = 'median_house_value'
-                elif columns:
-                    target_column = columns[-1] # Original fallback
-                else:
-                    state['error_messages'].append("No columns found in dataset.")
-                    return state
             
-            if not feature_columns: # If LLM doesn't provide feature columns
-                if target_column and columns:
-                    feature_columns = [col for col in columns if col != target_column]
-                else:
-                    feature_columns = columns[:-1] if columns else []
-
-
-            state['problem_type'] = problem_type
-            state['target_column'] = target_column
-            state['feature_columns'] = feature_columns
-
-            logger.info(f"Identified problem type: {problem_type}, target: {target_column}")
-
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse LLM JSON response: {response_str}")
-            # Fallback to simpler parsing or default as in original code
-            if "classification" in response_str.lower():
-                state['problem_type'] = "classification"
-            elif "regression" in response_str.lower():
-                state['problem_type'] = "regression"
+            # Clean the response - remove any markdown, thinking tags, or extra text
+            import re
+            
+            # First, try to extract JSON from markdown code blocks
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_str, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
             else:
-                state['problem_type'] = "clustering"
+                # Try to find any JSON-like structure with our required keys
+                json_match = re.search(r'\{[^{}]*"problem_type"[^{}]*"target_column"[^{}]*"feature_columns"[^{}]*"reasoning"[^{}]*\}', response_str, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    # Last resort: try to find any JSON object
+                    json_match = re.search(r'\{.*?\}', response_str, re.DOTALL)
+                    json_str = json_match.group(0) if json_match else None
             
+            if json_str:
+                # Clean up the JSON string
+                json_str = re.sub(r'<think>.*?</think>', '', json_str, flags=re.DOTALL)
+                json_str = json_str.strip()
+                
+                try:
+                    response_json = json.loads(json_str)
+                    
+                    problem_type = response_json.get("problem_type", "classification")
+                    target_column = response_json.get("target_column")
+                    feature_columns = response_json.get("feature_columns")
+                    
+                    columns = state['data_info']['columns']
+                    
+                    # Validate target column
+                    if not target_column or target_column not in columns:
+                        logger.warning(f"LLM suggested invalid target column: {target_column}. Using fallback logic.")
+                        # Intelligent fallback based on column names and data types
+                        if 'median_house_value' in columns:
+                            target_column = 'median_house_value'
+                            problem_type = 'regression'
+                        elif 'price' in [col.lower() for col in columns]:
+                            target_column = next(col for col in columns if 'price' in col.lower())
+                            problem_type = 'regression'
+                        elif 'target' in [col.lower() for col in columns]:
+                            target_column = next(col for col in columns if 'target' in col.lower())
+                        elif any('class' in col.lower() or 'label' in col.lower() for col in columns):
+                            target_column = next(col for col in columns if 'class' in col.lower() or 'label' in col.lower())
+                            problem_type = 'classification'
+                        elif columns:
+                            # Last resort: use the last column
+                            target_column = columns[-1]
+                            # Determine problem type based on target column data type
+                            target_dtype = state['data_info']['dtypes'].get(target_column)
+                            if 'float' in str(target_dtype) or 'int' in str(target_dtype):
+                                # Check if it's continuous or discrete
+                                if state['raw_data'] is not None:
+                                    unique_values = state['raw_data'][target_column].nunique()
+                                    if unique_values > 20:  # Heuristic for continuous
+                                        problem_type = 'regression'
+                                    else:
+                                        problem_type = 'classification'
+                            else:
+                                problem_type = 'classification'
+                        else:
+                            state['error_messages'].append("No columns found in dataset.")
+                            return state
+                    
+                    # Validate feature columns
+                    if not feature_columns or not all(col in columns for col in feature_columns):
+                        logger.warning("LLM suggested invalid feature columns. Using fallback logic.")
+                        if target_column and columns:
+                            feature_columns = [col for col in columns if col != target_column]
+                        else:
+                            feature_columns = columns[:-1] if columns else []
+                    
+                    state['problem_type'] = problem_type
+                    state['target_column'] = target_column
+                    state['feature_columns'] = feature_columns
+                    
+                    logger.info(f"Identified problem type: {problem_type}, target: {target_column}")
+                    
+                except json.JSONDecodeError as json_error:
+                    logger.error(f"Failed to parse extracted JSON: {json_error}")
+                    raise json_error
+            else:
+                raise json.JSONDecodeError("No valid JSON found in response", response_str, 0)
+                
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse LLM JSON response, using fallback logic")
+            
+            # Robust fallback logic
+            response_lower = response_str.lower() if response_str else ""
+            
+            # Determine problem type from response text
+            if "classification" in response_lower:
+                state['problem_type'] = "classification"
+            elif "regression" in response_lower:
+                state['problem_type'] = "regression"
+            elif "clustering" in response_lower:
+                state['problem_type'] = "clustering"
+            else:
+                # Smart default based on data analysis
+                columns = state['data_info']['columns']
+                if columns and state['raw_data'] is not None:
+                    # Check the last column (common target position)
+                    potential_target = columns[-1]
+                    target_dtype = state['data_info']['dtypes'].get(potential_target)
+                    
+                    if 'float' in str(target_dtype) or 'int' in str(target_dtype):
+                        unique_values = state['raw_data'][potential_target].nunique()
+                        state['problem_type'] = 'regression' if unique_values > 20 else 'classification'
+                    else:
+                        state['problem_type'] = 'classification'
+                else:
+                    state['problem_type'] = 'classification'  # Safe default
+            
+            # Set target and features using intelligent fallback
             columns = state['data_info']['columns']
-            # Fallback if JSON parsing fails
-            if 'median_house_value' in columns: # Heuristic
-                 state['target_column'] = 'median_house_value'
-                 state['feature_columns'] = [col for col in columns if col != 'median_house_value']
+            if 'median_house_value' in columns:
+                state['target_column'] = 'median_house_value'
+                state['problem_type'] = 'regression'
+                state['feature_columns'] = [col for col in columns if col != 'median_house_value']
             elif columns:
-                 state['target_column'] = columns[-1]
-                 state['feature_columns'] = columns[:-1]
-            logger.warning("Used blem identification due to LLM response parsing error.")
-
+                state['target_column'] = columns[-1]
+                state['feature_columns'] = columns[:-1]
+            else:
+                state['error_messages'].append("Unable to determine target and feature columns.")
+                return state
+            
+            logger.warning(f"Used fallback: problem_type={state['problem_type']}, target={state['target_column']}")
+        
         except Exception as e:
             logger.error(f"Problem identification failed: {e}")
             state['error_messages'].append(f"Problem identification failed: {str(e)}")
-            # Ensure defaults are set if an error occurs mid-logic
-            if not state['target_column'] and state['data_info'].get('columns'):
-                state['target_column'] = state['data_info']['columns'][-1]
-                state['feature_columns'] = state['data_info']['columns'][:-1]
-
+            
+            # Ensure we have some defaults set
+            columns = state['data_info']['columns'] if state['data_info'] else []
+            if columns:
+                state['problem_type'] = 'classification'  # Safe default
+                state['target_column'] = columns[-1]
+                state['feature_columns'] = columns[:-1]
+            else:
+                state['error_messages'].append("Critical error: No column information available.")
+        
         return state
 
 
@@ -416,7 +508,7 @@ class CSVMLAgent:
         return state
     
     async def algorithm_recommendation_node(self, state: AgentState) -> AgentState:
-        """LLM recommends optimal algorithms"""
+        """LLM recommends optimal algorithms with correct problem type mapping"""
         logger.info("Getting algorithm recommendations from LLM")
         
         prompt = f"""
@@ -430,41 +522,88 @@ class CSVMLAgent:
         Consider:
         - Dataset size and complexity
         - Data quality and missing values
-        - Problem type requirements
+        - Problem type requirements ({state['problem_type']})
         - Computational efficiency
         
-        Recommend 3-5 algorithms in order of preference. Include both traditional ML and ensemble methods.
-        Respond with comma-separated algorithm names that match sklearn naming:
-        Example: RandomForestClassifier,GradientBoostingClassifier,LogisticRegression
+        For {state['problem_type']} problems, recommend 3-5 algorithms in order of preference.
+        Include both traditional ML and ensemble methods suitable for {state['problem_type']}.
+        
+        Respond with algorithm names only (one per line):
         """
         
         try:
             response = await self.llm_client.get_llm_response(prompt)
             
-            # Parse algorithm recommendations
-            algorithms = []
+            # Define correct algorithms based on problem type
             if state['problem_type'] == 'classification':
+                available_algorithms = [
+                    'RandomForestClassifier', 
+                    'GradientBoostingClassifier', 
+                    'LogisticRegression',
+                    'SVC',
+                    'KNeighborsClassifier',
+                    'DecisionTreeClassifier'
+                ]
                 default_algorithms = ['RandomForestClassifier', 'GradientBoostingClassifier', 'LogisticRegression']
             elif state['problem_type'] == 'regression':
+                available_algorithms = [
+                    'RandomForestRegressor', 
+                    'GradientBoostingRegressor', 
+                    'LinearRegression',
+                    'SVR',
+                    'KNeighborsRegressor',
+                    'DecisionTreeRegressor'
+                ]
                 default_algorithms = ['RandomForestRegressor', 'GradientBoostingRegressor', 'LinearRegression']
-            else:
+            else:  # clustering
+                available_algorithms = ['KMeans', 'DBSCAN', 'AgglomerativeClustering']
                 default_algorithms = ['KMeans', 'DBSCAN', 'AgglomerativeClustering']
             
-            # Use LLM response or fallback to defaults
-            if any(alg in response for alg in default_algorithms):
-                for alg in default_algorithms:
-                    if alg in response:
-                        print(f"Algorithm {alg} found in LLM response")
-                        algorithms.append(alg)
-            else:
+            # Parse LLM response and map to correct algorithms
+            algorithms = []
+            response_lines = response.strip().split('\n')
+            
+            for line in response_lines:
+                line = line.strip()
+                
+                # Direct match
+                if line in available_algorithms:
+                    algorithms.append(line)
+                    continue
+                
+                # Fuzzy matching for partial names
+                line_lower = line.lower()
+                for alg in available_algorithms:
+                    alg_base = alg.replace('Classifier', '').replace('Regressor', '').lower()
+                    if (alg_base in line_lower or 
+                        alg.lower() in line_lower or
+                        any(word in line_lower for word in alg_base.split())):
+                        if alg not in algorithms:  # Avoid duplicates
+                            algorithms.append(alg)
+                        break
+            
+            # Ensure we have at least some algorithms
+            if not algorithms:
+                logger.warning(f"No algorithms parsed from LLM response. Using defaults for {state['problem_type']}")
                 algorithms = default_algorithms
             
+            # Limit to top 3-4 algorithms to avoid memory issues
+            algorithms = algorithms[:4]
+            
             state['recommended_algorithms'] = algorithms
-            logger.info(f"Recommended algorithms: {algorithms}")
+            logger.info(f"Recommended algorithms for {state['problem_type']}: {algorithms}")
             
         except Exception as e:
             logger.error(f"Algorithm recommendation failed: {e}")
-            state['recommended_algorithms'] = ['RandomForestClassifier'] if state['problem_type'] == 'classification' else ['RandomForestRegressor']
+            # Fallback to defaults based on problem type
+            if state['problem_type'] == 'classification':
+                state['recommended_algorithms'] = ['RandomForestClassifier', 'LogisticRegression']
+            elif state['problem_type'] == 'regression':
+                state['recommended_algorithms'] = ['RandomForestRegressor', 'LinearRegression']
+            else:
+                state['recommended_algorithms'] = ['KMeans']
+            
+            logger.info(f"Using fallback algorithms: {state['recommended_algorithms']}")
         
         return state
     
@@ -651,48 +790,97 @@ class CSVMLAgent:
         return X_processed if isinstance(X_processed, np.ndarray) else X_processed.values
     
     def _get_model_instances(self, algorithm_names: List[str]) -> Dict[str, Any]:
-        """Get memory-optimized model instances"""
+        """Get memory-optimized model instances for M1 MacBook"""
         model_map = {
-            # Memory-optimized RandomForest parameters
+            # Very conservative parameters for M1 memory constraints
             'RandomForestClassifier': RandomForestClassifier(
                 random_state=42, 
-                max_depth=10,  # Limit depth to reduce memory
-                n_estimators=50,  # Reduce trees from default 100
-                max_features='sqrt'  # Reduce feature consideration
+                max_depth=5,        # Very shallow trees
+                n_estimators=10,    # Minimal trees
+                max_features='sqrt',
+                n_jobs=1,           # Single thread
+                min_samples_split=10,
+                min_samples_leaf=5
             ),
             'RandomForestRegressor': RandomForestRegressor(
                 random_state=42,
-                max_depth=10,
-                n_estimators=50,
-                max_features='sqrt'
+                max_depth=5,
+                n_estimators=10,
+                max_features='sqrt',
+                n_jobs=1,
+                min_samples_split=10,
+                min_samples_leaf=5
             ),
-            # Limit GradientBoosting complexity
             'GradientBoostingClassifier': GradientBoostingClassifier(
                 random_state=42,
-                max_depth=6,  # Shallow trees
-                n_estimators=50  # Fewer estimators
+                max_depth=3,        # Very shallow
+                n_estimators=10,    # Minimal estimators
+                learning_rate=0.1,
+                subsample=0.8       # Use less data per tree
             ),
             'GradientBoostingRegressor': GradientBoostingRegressor(
                 random_state=42,
-                max_depth=6,
-                n_estimators=50
+                max_depth=3,
+                n_estimators=10,
+                learning_rate=0.1,
+                subsample=0.8
             ),
-            'LogisticRegression': LogisticRegression(random_state=42, max_iter=1000),
-            'LinearRegression': LinearRegression(),
-            'KMeans': KMeans(random_state=42, n_clusters=5),
-            'SVC': SVC(random_state=42),
-            'SVR': SVR(),
-            'KNeighborsClassifier': KNeighborsClassifier(),
-            'KNeighborsRegressor': KNeighborsRegressor(),
-            'DecisionTreeClassifier': DecisionTreeClassifier(random_state=42),
-            'DecisionTreeRegressor': DecisionTreeRegressor(random_state=42),
-            'KMeans': KMeans(random_state=42),
-            'DBSCAN': DBSCAN(),
-            'AgglomerativeClustering': AgglomerativeClustering()
+            'LogisticRegression': LogisticRegression(
+                random_state=42, 
+                max_iter=1000,
+                solver='lbfgs',     # Memory efficient solver
+                n_jobs=1
+            ),
+            'LinearRegression': LinearRegression(
+                n_jobs=1
+            ),
+            'SVC': SVC(
+                random_state=42,
+                kernel='rbf',
+                C=1.0,
+                max_iter=1000       # Limit iterations
+            ),
+            'SVR': SVR(
+                kernel='rbf',
+                C=1.0
+            ),
+            'KNeighborsClassifier': KNeighborsClassifier(
+                n_neighbors=5,
+                n_jobs=1
+            ),
+            'KNeighborsRegressor': KNeighborsRegressor(
+                n_neighbors=5,
+                n_jobs=1
+            ),        
+            'DecisionTreeClassifier': DecisionTreeClassifier(
+                random_state=42,
+                max_depth=10,       # Limit depth
+                min_samples_split=10,
+                min_samples_leaf=5
+            ),
+            'DecisionTreeRegressor': DecisionTreeRegressor(
+                random_state=42,
+                max_depth=10,
+                min_samples_split=10,
+                min_samples_leaf=5
+            ),
+            'KMeans': KMeans(
+                random_state=42, 
+                n_clusters=5,
+                max_iter=100,       # Limit iterations
+                n_init=5            # Reduce random initializations
+            ),
+            'DBSCAN': DBSCAN(
+                eps=0.3,
+                min_samples=5
+            ),
+            'AgglomerativeClustering': AgglomerativeClustering(
+                n_clusters=5
+            )
         }
         
         return {name: model_map[name] for name in algorithm_names if name in model_map}
-    
+
     async def evaluation_analysis_node(self, state: AgentState) -> AgentState:
         """LLM analyzes model results"""
         logger.info("Analyzing model evaluation results")
@@ -933,7 +1121,7 @@ async def main():
     agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/housing.csv"
+    csv_file_path = "runnable/ai_dev_productivity.csv"
     
     try:
         # Analyze CSV and build ML model
