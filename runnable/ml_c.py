@@ -15,7 +15,8 @@ import chardet
 from groq import Groq
 import warnings
 warnings.filterwarnings('ignore')
-
+import re
+from difflib import get_close_matches
 # ML Libraries
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
@@ -507,154 +508,213 @@ class CSVMLAgent:
                 logger.error(f"Feature analysis failed: {e}")
         
         return state
-    
+
     async def algorithm_recommendation_node(self, state: AgentState) -> AgentState:
         """LLM recommends optimal algorithms with correct problem type mapping"""
         logger.info("Getting algorithm recommendations from LLM")
-        
+
         prompt = f"""
         Recommend the best machine learning algorithms for this dataset:
-        
+
         Problem Type: {state['problem_type']}
         Dataset Shape: {state['data_info']['shape']}
         Target Column: {state['target_column']}
         Data Quality Issues: {state['data_quality'].get('llm_analysis', 'None identified')}
-        
+
         Consider:
         - Dataset size and complexity
         - Data quality and missing values
         - Problem type requirements ({state['problem_type']})
         - Computational efficiency
-        
+
         For {state['problem_type']} problems, recommend 3-5 algorithms in order of preference.
         Include both traditional ML and ensemble methods suitable for {state['problem_type']}.
-        
-        Respond with algorithm names only (one per line):
+
+        Respond with only algorithm names in order of preference, one per line:
         """
-        
+
         try:
             response = await self.llm_client.get_llm_response(prompt)
-            
+
             # Define correct algorithms based on problem type
             if state['problem_type'] == 'classification':
                 available_algorithms = [
-                    'RandomForestClassifier', 
-                    'GradientBoostingClassifier', 
-                    'LogisticRegression',
-                    'SVC',
-                    'KNeighborsClassifier',
-                    'DecisionTreeClassifier'
+                    'RandomForestClassifier', 'GradientBoostingClassifier', 'LogisticRegression',
+                    'SVC', 'KNeighborsClassifier', 'DecisionTreeClassifier'
                 ]
+                aliases = {
+                    'random forest': 'RandomForestClassifier',
+                    'gradient boosting': 'GradientBoostingClassifier',
+                    'logistic regression': 'LogisticRegression',
+                    'svc': 'SVC', 'support vector': 'SVC',
+                    'knn': 'KNeighborsClassifier', 'k-neighbors': 'KNeighborsClassifier',
+                    'decision tree': 'DecisionTreeClassifier'
+                }
                 default_algorithms = ['RandomForestClassifier', 'GradientBoostingClassifier', 'LogisticRegression']
+
             elif state['problem_type'] == 'regression':
                 available_algorithms = [
-                    'RandomForestRegressor', 
-                    'GradientBoostingRegressor', 
-                    'LinearRegression',
-                    'SVR',
-                    'KNeighborsRegressor',
-                    'DecisionTreeRegressor'
+                    'RandomForestRegressor', 'GradientBoostingRegressor', 'LinearRegression',
+                    'SVR', 'KNeighborsRegressor', 'DecisionTreeRegressor'
                 ]
+                aliases = {
+                    'random forest': 'RandomForestRegressor',
+                    'gradient boosting': 'GradientBoostingRegressor',
+                    'linear regression': 'LinearRegression',
+                    'svr': 'SVR', 'support vector': 'SVR',
+                    'knn': 'KNeighborsRegressor', 'k-neighbors': 'KNeighborsRegressor',
+                    'decision tree': 'DecisionTreeRegressor'
+                }
                 default_algorithms = ['RandomForestRegressor', 'GradientBoostingRegressor', 'LinearRegression']
+
             else:  # clustering
                 available_algorithms = ['KMeans', 'DBSCAN', 'AgglomerativeClustering']
+                aliases = {
+                    'kmeans': 'KMeans', 'k-means': 'KMeans',
+                    'dbscan': 'DBSCAN',
+                    'agglomerative': 'AgglomerativeClustering'
+                }
                 default_algorithms = ['KMeans', 'DBSCAN', 'AgglomerativeClustering']
-            
-            # Parse LLM response and map to correct algorithms
-            algorithms = []
+
+            algorithms = set()
             response_lines = response.strip().split('\n')
-            
+
+            # Normalize and extract algorithm names
             for line in response_lines:
-                line = line.strip()
-                
-                # Direct match
-                if line in available_algorithms:
-                    algorithms.append(line)
+                line = line.strip().lower()
+                logger.info(f"Processing algorithm recommendation: {line}")
+
+                if not line or any(tag in line for tag in ['<think>', '</think>']):
                     continue
-                
-                # Fuzzy matching for partial names
-                line_lower = line.lower()
-                for alg in available_algorithms:
-                    alg_base = alg.replace('Classifier', '').replace('Regressor', '').lower()
-                    if (alg_base in line_lower or 
-                        alg.lower() in line_lower or
-                        any(word in line_lower for word in alg_base.split())):
-                        if alg not in algorithms:  # Avoid duplicates
-                            algorithms.append(alg)
+
+                # Remove bullet/numbering
+                line = re.sub(r"^\s*[\-•\d\.\)]*\s*", "", line)
+
+                # Attempt to resolve using aliases
+                for key in aliases:
+                    if key in line:
+                        mapped = aliases[key]
+                        algorithms.add(mapped)
                         break
-            
-            # Ensure we have at least some algorithms
+                else:
+                    # Try fuzzy match to available algorithms
+                    match = get_close_matches(line, available_algorithms, n=1, cutoff=0.6)
+                    if match:
+                        algorithms.add(match[0])
+
+            # Finalize list
+            algorithms = list(algorithms)
             if not algorithms:
                 logger.warning(f"No algorithms parsed from LLM response. Using defaults for {state['problem_type']}")
                 algorithms = default_algorithms
             elif len(algorithms) < 2:
                 logger.warning(f"Only {len(algorithms)} algorithms found. Adding defaults.")
-                algorithms.extend([alg for alg in default_algorithms if alg not in algorithms])
-            # Limit to top 3-4 algorithms to avoid memory issues
+                algorithms += [alg for alg in default_algorithms if alg not in algorithms]
+
+            # Limit to top 4 to avoid memory issues
             algorithms = algorithms[:4]
-            
+
             state['recommended_algorithms'] = algorithms
             logger.info(f"Recommended algorithms for {state['problem_type']}: {algorithms}")
-            
+
         except Exception as e:
             logger.error(f"Algorithm recommendation failed: {e}")
-            # Fallback to defaults based on problem type
-            if state['problem_type'] == 'classification':
-                state['recommended_algorithms'] = ['RandomForestClassifier', 'LogisticRegression']
-            elif state['problem_type'] == 'regression':
-                state['recommended_algorithms'] = ['RandomForestRegressor', 'LinearRegression']
-            else:
-                state['recommended_algorithms'] = ['KMeans']
-            
+            fallback = {
+                'classification': ['RandomForestClassifier', 'LogisticRegression'],
+                'regression': ['RandomForestRegressor', 'LinearRegression'],
+                'clustering': ['KMeans']
+            }
+            state['recommended_algorithms'] = fallback.get(state['problem_type'], [])
             logger.info(f"Using fallback algorithms: {state['recommended_algorithms']}")
-        
+
         return state
-    
+
     async def preprocessing_strategy_node(self, state: AgentState) -> AgentState:
         """LLM designs preprocessing strategy"""
         logger.info("Designing preprocessing strategy")
         
-        prompt = f"""
-        Design optimal preprocessing steps for this dataset:
-        
-        Problem Type: {state['problem_type']}
-        Missing Values: {state['data_info']['missing_values']}
-        Data Types: {state['data_info']['dtypes']}
-        Recommended Algorithms: {state['recommended_algorithms']}
-        
-        Design preprocessing pipeline considering:
-        1. Missing value imputation
-        2. Categorical encoding
-        3. Feature scaling
-        4. Outlier handling
-        5. Feature selection
-        
-        Respond with ordered preprocessing steps.
-        """
-        
         try:
+            # Validate required state keys
+            if 'data_info' not in state:
+                raise ValueError("Missing 'data_info' in state")
+            
+            data_info = state['data_info']
+            required_keys = ['missing_values', 'dtypes']
+            for key in required_keys:
+                if key not in data_info:
+                    raise ValueError(f"Missing '{key}' in data_info")
+            
+            prompt = f"""
+            Design optimal preprocessing steps for this dataset:
+            Problem Type: {state.get('problem_type', 'Unknown')}
+            Missing Values: {data_info['missing_values']}
+            Data Types: {data_info['dtypes']}
+            Recommended Algorithms: {state.get('recommended_algorithms', [])}
+            
+            Design preprocessing pipeline considering:
+            1. Missing value imputation
+            2. Categorical encoding
+            3. Feature scaling
+            4. Outlier handling
+            5. Feature selection
+            
+            Respond with a JSON list of ordered preprocessing steps like:
+            ["imputation", "encoding", "scaling", "outlier_removal", "feature_selection"]
+            """
+            
             response = await self.llm_client.get_llm_response(prompt)
             
-            # Standard preprocessing steps based on data characteristics
+            # Try to parse LLM response, fall back to rule-based approach
             steps = []
+            try:
+                import json
+                # Try to extract JSON from response
+                if '[' in response and ']' in response:
+                    json_part = response[response.find('['):response.rfind(']')+1]
+                    steps = json.loads(json_part)
+                else:
+                    # Parse text response for step names
+                    step_keywords = ['imputation', 'encoding', 'scaling', 'outlier', 'feature_selection']
+                    steps = [step for step in step_keywords if step.lower() in response.lower()]
+            except:
+                logger.warning("Could not parse LLM response, using rule-based approach")
             
-            # Check for missing values
-            if sum(state['data_info']['missing_values'].values()) > 0:
-                steps.append('imputation')
-            
-            # Check for categorical columns
-            if any('object' in str(dtype) for dtype in state['data_info']['dtypes'].values()):
-                steps.append('encoding')
-            
-            # Always include scaling for most algorithms
-            if any(alg in ['LogisticRegression', 'SVC', 'KNeighbors'] for alg in state['recommended_algorithms']):
-                steps.append('scaling')
+            # Fallback to rule-based approach if LLM parsing failed
+            if not steps:
+                steps = []
+                
+                # Check for missing values
+                missing_count = sum(data_info['missing_values'].values()) if data_info['missing_values'] else 0
+                if missing_count > 0:
+                    steps.append('imputation')
+                
+                # Check for categorical columns
+                has_categorical = any('object' in str(dtype).lower() or 'category' in str(dtype).lower() 
+                                    for dtype in data_info['dtypes'].values())
+                if has_categorical:
+                    steps.append('encoding')
+                
+                # Check if scaling is needed based on algorithms
+                scaling_algorithms = ['logistic', 'svc', 'svm', 'kneighbors', 'neural', 'perceptron']
+                recommended_algs = state.get('recommended_algorithms', [])
+                needs_scaling = any(any(scale_alg in str(alg).lower() for scale_alg in scaling_algorithms) 
+                                for alg in recommended_algs)
+                if needs_scaling:
+                    steps.append('scaling')
+                
+                # Add outlier handling for numeric data
+                has_numeric = any('int' in str(dtype).lower() or 'float' in str(dtype).lower() 
+                                for dtype in data_info['dtypes'].values())
+                if has_numeric:
+                    steps.append('outlier_handling')
             
             state['preprocessing_steps'] = steps
             logger.info(f"Preprocessing steps: {steps}")
             
         except Exception as e:
             logger.error(f"Preprocessing strategy failed: {e}")
+            # Set default steps as fallback
+            state['preprocessing_steps'] = ['imputation', 'encoding', 'scaling']
         
         return state
     
@@ -710,8 +770,6 @@ class CSVMLAgent:
                 # Train models
                 models = self._get_model_instances(state['recommended_algorithms'])
                 trained_models = {}
-                if 'trained_models' not in state:
-                    state['trained_models'] = {}
                 
                 for name, model in models.items():
                     try:
@@ -1049,107 +1107,119 @@ class CSVMLAgent:
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             return {}
-    
     def generate_report(self, results: Dict[str, Any], output_path: str = None):
-        """Generate comprehensive logging report"""
-        logger.info("="*60)
-        logger.info("CSV ML ANALYSIS REPORT")
-        logger.info("="*60)
+        """Generate comprehensive logging report and save to file"""
+        if output_path is None:
+            output_path = "analysis_report.txt"
+        
+        lines = []
+        lines.append("="*60)
+        lines.append("CSV ML ANALYSIS REPORT")
+        lines.append("="*60)
         
         # Dataset information
-        logger.info(f"Dataset: {results.get('csv_path', 'Unknown')}")
-        logger.info(f"Analysis Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("")
+        lines.append(f"Dataset: {results.get('csv_path', 'Unknown')}")
+        lines.append(f"Analysis Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("")
         
         # Dataset Overview
-        logger.info("DATASET OVERVIEW:")
-        logger.info("-" * 20)
-        logger.info(f"Shape: {results.get('data_shape', 'Unknown')}")
-        logger.info(f"Problem Type: {results.get('problem_type', 'Unknown')}")
-        logger.info(f"Target Column: {results.get('target_column', 'Unknown')}")
-        logger.info(f"Feature Columns: {len(results.get('feature_columns', []))} features")
+        lines.append("DATASET OVERVIEW:")
+        lines.append("-" * 20)
+        lines.append(f"Shape: {results.get('data_shape', 'Unknown')}")
+        lines.append(f"Problem Type: {results.get('problem_type', 'Unknown')}")
+        lines.append(f"Target Column: {results.get('target_column', 'Unknown')}")
+        lines.append(f"Feature Columns: {len(results.get('feature_columns', []))} features")
         
         if results.get('feature_columns'):
-            logger.info(f"Features: {', '.join(results['feature_columns'][:5])}{'...' if len(results['feature_columns']) > 5 else ''}")
-        logger.info("")
+            features_preview = ', '.join(results['feature_columns'][:5])
+            if len(results['feature_columns']) > 5:
+                features_preview += '...'
+            lines.append(f"Features: {features_preview}")
+        lines.append("")
         
         # Best Model Results
         best_model = results.get('best_model', {})
-        logger.info("BEST MODEL RESULTS:")
-        logger.info("-" * 20)
-        logger.info(f"Algorithm: {best_model.get('name', 'None')}")
+        lines.append("BEST MODEL RESULTS:")
+        lines.append("-" * 20)
+        lines.append(f"Algorithm: {best_model.get('name', 'None')}")
         
         # Performance Metrics
         metrics = best_model.get('metrics', {})
         if metrics:
-            logger.info("Performance Metrics:")
+            lines.append("Performance Metrics:")
             for metric, value in metrics.items():
                 if isinstance(value, float):
-                    logger.info(f"  {metric.upper()}: {value:.4f}")
+                    lines.append(f"  {metric.upper()}: {value:.4f}")
                 else:
-                    logger.info(f"  {metric.upper()}: {value}")
-        logger.info("")
+                    lines.append(f"  {metric.upper()}: {value}")
+        lines.append("")
         
         # All Model Comparisons (if available)
         trained_models = results.get('trained_models', {})
         if len(trained_models) > 1:
-            logger.info("ALL MODELS COMPARISON:")
-            logger.info("-" * 25)
+            lines.append("ALL MODELS COMPARISON:")
+            lines.append("-" * 25)
             for model_name, model_data in trained_models.items():
                 model_metrics = model_data.get('metrics', {})
-                logger.info(f"{model_name}:")
+                lines.append(f"{model_name}:")
                 for metric, value in model_metrics.items():
                     if isinstance(value, float):
-                        logger.info(f"  {metric.upper()}: {value:.4f}")
+                        lines.append(f"  {metric.upper()}: {value:.4f}")
                     else:
-                        logger.info(f"  {metric.upper()}: {value}")
-                logger.info("")
+                        lines.append(f"  {metric.upper()}: {value}")
+                lines.append("")
         
         # Recommendations
         recommendations = results.get('recommendations', 'No recommendations available')
-        logger.info("RECOMMENDATIONS:")
-        logger.info("-" * 15)
-        logger.info(recommendations)
-        logger.info("")
+        lines.append("RECOMMENDATIONS:")
+        lines.append("-" * 15)
+        lines.append(recommendations)
+        lines.append("")
         
         # Preprocessing Steps
         preprocessing_steps = results.get('preprocessing_steps', [])
         if preprocessing_steps:
-            logger.info("PREPROCESSING APPLIED:")
-            logger.info("-" * 22)
+            lines.append("PREPROCESSING APPLIED:")
+            lines.append("-" * 22)
             for step in preprocessing_steps:
-                logger.info(f"  • {step.title()}")
-            logger.info("")
+                lines.append(f"  • {step.title()}")
+            lines.append("")
         
         # Errors and Warnings
         errors = results.get('errors', []) + results.get('error_messages', [])
         if errors:
-            logger.warning("ERRORS AND WARNINGS:")
-            logger.warning("-" * 20)
+            lines.append("ERRORS AND WARNINGS:")
+            lines.append("-" * 20)
             for error in errors:
-                logger.warning(f"  • {error}")
-            logger.warning("")
+                lines.append(f"  • {error}")
+            lines.append("")
         
         # Data Quality Issues (if available)
         data_quality = results.get('data_quality', {})
         if data_quality:
-            logger.info("DATA QUALITY SUMMARY:")
-            logger.info("-" * 22)
+            lines.append("DATA QUALITY SUMMARY:")
+            lines.append("-" * 22)
             missing_values = data_quality.get('missing_values', {})
             if missing_values:
-                logger.info("Missing Values:")
+                lines.append("Missing Values:")
                 for col, count in missing_values.items():
                     if count > 0:
-                        logger.info(f"  {col}: {count} missing")
+                        lines.append(f"  {col}: {count} missing")
             
             duplicates = data_quality.get('duplicate_rows', 0)
             if duplicates > 0:
-                logger.info(f"Duplicate Rows: {duplicates}")
-            logger.info("")
+                lines.append(f"Duplicate Rows: {duplicates}")
+            lines.append("")
         
-        logger.info("="*60)
-        logger.info("ANALYSIS COMPLETE")
-        logger.info("="*60)
+        lines.append("="*60)
+        lines.append("ANALYSIS COMPLETE")
+        lines.append("="*60)
+
+        # Write to file
+        with open(output_path, 'w') as f:
+            f.write('\n'.join(lines))
+
+        return output_path
 
     def compare_all_models(self, results: Dict[str, Any]):
         """Display detailed comparison of all trained models"""
@@ -1197,7 +1267,7 @@ async def main():
     agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/bitcoin_downsampled_time.csv"
+    csv_file_path = "runnable/housing.csv"
     
     try:
         # Analyze CSV and build ML model
@@ -1218,14 +1288,6 @@ async def main():
         print(f"🎲 Target Column: {results['target_column']}")
         print(f"🔧 Feature Columns: {len(results['feature_columns'])} features")
         
-        if results['best_model']:
-            print(f"\n🏆 Best Model: {results['best_model']['name']}")
-            print("📈 Performance Metrics:")
-            for metric, value in results['best_model']['metrics'].items():
-                if isinstance(value, float):
-                    print(f"   {metric.upper()}: {value:.4f}")
-                else:
-                    print(f"   {metric.upper()}: {value}")
         
         # In main() function, after printing best model results, ADD:
         if results.get('all_models'):
@@ -1246,17 +1308,25 @@ async def main():
         # Compare all models
         agent.compare_all_models(results)
 
+        if results['best_model']:
+            print(f"\n🏆 Best Model: {results['best_model']['name']}")
+            print("📈 Performance Metrics:")
+            for metric, value in results['best_model']['metrics'].items():
+                if isinstance(value, float):
+                    print(f"   {metric.upper()}: {value:.4f}")
+                else:
+                    print(f"   {metric.upper()}: {value}")
         
         print(f"\n💡 Recommendations:")
         print(results['recommendations'])
         
         # Generate detailed report
-        agent.generate_report(results, "ml_analysis_report.html")
-        print(f"\n📄 Detailed report saved to: ml_analysis_report.html")
+        agent.generate_report(results, "runnable/analysis_report.txt")
+        print(f"\n📄 Detailed report saved to: runnable/analysis_report.txt")
         
         # Save the best model
         if results['best_model']:
-            agent.save_model(results['best_model'], "runnavle/best_model.joblib")
+            agent.save_model(results['best_model'], "runnable/best_model.joblib")
             print(f"💾 Best model saved to: runnable/best_model.joblib")
         
         if results['errors']:
