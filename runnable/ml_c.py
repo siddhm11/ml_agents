@@ -319,9 +319,7 @@ class CSVMLAgent:
         try:
             response_str = await self.llm_client.get_llm_response(prompt)
             
-            # Clean the response - remove any markdown, thinking tags, or extra text
-            import re
-            
+            # Clean the response - remove any markdown, thinking tags, or extra text            
             # First, try to extract JSON from markdown code blocks
             json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_str, re.DOTALL)
             if json_match:
