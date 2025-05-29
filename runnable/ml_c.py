@@ -17,7 +17,11 @@ import warnings
 warnings.filterwarnings('ignore')
 import re
 from difflib import get_close_matches
+
+
 # ML Libraries
+
+
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
 from sklearn.impute import SimpleImputer, KNNImputer
@@ -278,6 +282,9 @@ class CSVMLAgent:
                 'data_types_distribution': {str(dtype): list(state['data_info']['dtypes'].values()).count(dtype) for dtype in set(state['data_info']['dtypes'].values())}
             }
             state['data_quality'] = quality_assessment
+            logger.info(f"Quality assessment complete. ")
+            logger.info(f"LLM analysis: {response}")
+            logger.info(f"Quality issues: {quality_assessment['missing_value_percentage']}%, Duplicate percentage: {quality_assessment['duplicate_percentage']}%, Data types distribution: {quality_assessment['data_types_distribution']}")
             
         except Exception as e:
             logger.error(f"Data quality assessment failed: {e}")
@@ -633,10 +640,13 @@ class CSVMLAgent:
         
         try:
             # Validate required state keys
-            if 'data_info' not in state:
-                raise ValueError("Missing 'data_info' in state")
             
-            data_info = state['data_info']
+            data_info = state['data_info'] #wont be none
+            
+            if not data_info:
+                raise ValueError("Missing data_info in state")
+
+
             required_keys = ['missing_values', 'dtypes']
             for key in required_keys:
                 if key not in data_info:
@@ -1105,119 +1115,6 @@ class CSVMLAgent:
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             return {}
-    def generate_report(self, results: Dict[str, Any], output_path: str = None):
-        """Generate comprehensive logging report and save to file"""
-        if output_path is None:
-            output_path = "analysis_report.txt"
-        
-        lines = []
-        lines.append("="*60)
-        lines.append("CSV ML ANALYSIS REPORT")
-        lines.append("="*60)
-        
-        # Dataset information
-        lines.append(f"Dataset: {results.get('csv_path', 'Unknown')}")
-        lines.append(f"Analysis Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append("")
-        
-        # Dataset Overview
-        lines.append("DATASET OVERVIEW:")
-        lines.append("-" * 20)
-        lines.append(f"Shape: {results.get('data_shape', 'Unknown')}")
-        lines.append(f"Problem Type: {results.get('problem_type', 'Unknown')}")
-        lines.append(f"Target Column: {results.get('target_column', 'Unknown')}")
-        lines.append(f"Feature Columns: {len(results.get('feature_columns', []))} features")
-        
-        if results.get('feature_columns'):
-            features_preview = ', '.join(results['feature_columns'][:5])
-            if len(results['feature_columns']) > 5:
-                features_preview += '...'
-            lines.append(f"Features: {features_preview}")
-        lines.append("")
-        
-        # Best Model Results
-        best_model = results.get('best_model', {})
-        lines.append("BEST MODEL RESULTS:")
-        lines.append("-" * 20)
-        lines.append(f"Algorithm: {best_model.get('name', 'None')}")
-        
-        # Performance Metrics
-        metrics = best_model.get('metrics', {})
-        if metrics:
-            lines.append("Performance Metrics:")
-            for metric, value in metrics.items():
-                if isinstance(value, float):
-                    lines.append(f"  {metric.upper()}: {value:.4f}")
-                else:
-                    lines.append(f"  {metric.upper()}: {value}")
-        lines.append("")
-        
-        # All Model Comparisons (if available)
-        trained_models = results.get('trained_models', {})
-        if len(trained_models) > 1:
-            lines.append("ALL MODELS COMPARISON:")
-            lines.append("-" * 25)
-            for model_name, model_data in trained_models.items():
-                model_metrics = model_data.get('metrics', {})
-                lines.append(f"{model_name}:")
-                for metric, value in model_metrics.items():
-                    if isinstance(value, float):
-                        lines.append(f"  {metric.upper()}: {value:.4f}")
-                    else:
-                        lines.append(f"  {metric.upper()}: {value}")
-                lines.append("")
-        
-        # Recommendations
-        recommendations = results.get('recommendations', 'No recommendations available')
-        lines.append("RECOMMENDATIONS:")
-        lines.append("-" * 15)
-        lines.append(recommendations)
-        lines.append("")
-        
-        # Preprocessing Steps
-        preprocessing_steps = results.get('preprocessing_steps', [])
-        if preprocessing_steps:
-            lines.append("PREPROCESSING APPLIED:")
-            lines.append("-" * 22)
-            for step in preprocessing_steps:
-                lines.append(f"  • {step.title()}")
-            lines.append("")
-        
-        # Errors and Warnings
-        errors = results.get('errors', []) + results.get('error_messages', [])
-        if errors:
-            lines.append("ERRORS AND WARNINGS:")
-            lines.append("-" * 20)
-            for error in errors:
-                lines.append(f"  • {error}")
-            lines.append("")
-        
-        # Data Quality Issues (if available)
-        data_quality = results.get('data_quality', {})
-        if data_quality:
-            lines.append("DATA QUALITY SUMMARY:")
-            lines.append("-" * 22)
-            missing_values = data_quality.get('missing_values', {})
-            if missing_values:
-                lines.append("Missing Values:")
-                for col, count in missing_values.items():
-                    if count > 0:
-                        lines.append(f"  {col}: {count} missing")
-            
-            duplicates = data_quality.get('duplicate_rows', 0)
-            if duplicates > 0:
-                lines.append(f"Duplicate Rows: {duplicates}")
-            lines.append("")
-        
-        lines.append("="*60)
-        lines.append("ANALYSIS COMPLETE")
-        lines.append("="*60)
-
-        # Write to file
-        with open(output_path, 'w') as f:
-            f.write('\n'.join(lines))
-
-        return output_path
 
     def compare_all_models(self, results: Dict[str, Any]):
         """Display detailed comparison of all trained models"""
@@ -1265,7 +1162,7 @@ async def main():
     agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/housing.csv"
+    csv_file_path = "runnable/btc_1d_data_2018_to_2025.csv"
     
     try:
         # Analyze CSV and build ML model
@@ -1317,20 +1214,19 @@ async def main():
         
         print(f"\n💡 Recommendations:")
         print(results['recommendations'])
-        
-        # Generate detailed report
-        agent.generate_report(results, "runnable/analysis_report.txt")
-        print(f"\n📄 Detailed report saved to: runnable/analysis_report.txt")
-        
+                
         # Save the best model
         if results['best_model']:
-            agent.save_model(results['best_model'], "runnable/best_model.joblib")
-            print(f"💾 Best model saved to: runnable/best_model.joblib")
+            
+            agent.save_model(results['best_model'], "runnable/z.joblib")
+            print(f"💾 Best model saved to: runnable/z.joblib")
         
         if results['errors']:
             print(f"\n⚠️  Warnings/Errors:")
             for error in results['errors']:
                 print(f"   • {error}")
+        else:
+            print(f"\n✅ No warnings or errors encountered.")
     
     except Exception as e:
         print(f"❌ Error during analysis: {e}")
