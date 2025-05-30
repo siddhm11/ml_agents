@@ -740,7 +740,8 @@ class CSVMLAgent:
 
         try:
             df = state['raw_data'].copy()
-            
+            print(df.head())
+            print(df.shape)
             # Prepare features and target
             logger.info(f"Feature columns: {state['feature_columns']}")
             logger.info(f"Target column: {state['target_column']}")
@@ -749,8 +750,9 @@ class CSVMLAgent:
             # Prepare features and target
             X = df[state['feature_columns']]
             y = df[state['target_column']] if state['target_column'] in df.columns else None
+            print(len(y))
 
-            logger.info(f"X shape: {X.shape}, y shape: {len(y) if y is not None else 'None'}")
+            logger.info(f"X shape: {X.shape}, y shape: {y.shape if y is not None else 'None'}")
             if y is None and state['problem_type'] != 'clustering':
                 state['error_messages'].append("Target column not found for supervised learning")
                 return state
@@ -762,17 +764,34 @@ class CSVMLAgent:
             except Exception as e:
                 logger.error(f"Preprocessing failed: {e}")
                 state['error_messages'].append(f"Preprocessing failed: {str(e)}")
-                return state        
+                return state
 
             if state['problem_type'] in ['classification', 'regression']:
                 # Encode target for classification
-                if state['problem_type'] == 'classification' and y.dtype == 'object':
-                    le = LabelEncoder()
-                    y = le.fit_transform(y)
-                
-                # Split data
+                try:
+                    if state['problem_type'] == 'classification' and y.dtype == 'object':
+                        le = LabelEncoder()
+                        y = le.fit_transform(y)
+                        logger.info(1)
+                        logger.info(y.head())
+                    
+                    log_target = False
+                    if state['problem_type'] == 'regression':
+                        print(y.skew())
+                        if abs(y.skew()) > 1:
+                            logger.info("Applying log1p transform to skewed target")
+                            y = np.log1p(y)
+                            log_target = True
+
+                    # Split data
+                except Exception as e:
+                    logger.error(f"Target encoding failed: {e}")
+                    state['error_messages'].append(f"Target encoding failed: {str(e)}")
+                    return state
+
+
                 X_train, X_test, y_train, y_test = train_test_split(
-                    X_processed, y, test_size=0.2, random_state=42
+                    X_processed, y, test_size=0.1, random_state=42
                 )
                 
                 # Train models
@@ -891,95 +910,91 @@ class CSVMLAgent:
         return X_processed if isinstance(X_processed, np.ndarray) else X_processed.values
     
     def _get_model_instances(self, algorithm_names: List[str]) -> Dict[str, Any]:
-        """Get memory-optimized model instances for M1 MacBook"""
+        """Get memory-optimized and better-performing model instances for M1 MacBook Pro."""
+        
         model_map = {
-            # Very conservative parameters for M1 memory constraints
             'RandomForestClassifier': RandomForestClassifier(
-                random_state=42, 
-                max_depth=5,        # Very shallow trees
-                n_estimators=10,    # Minimal trees
-                max_features='sqrt',
-                n_jobs=1,           # Single thread
-                min_samples_split=10,
-                min_samples_leaf=5
+                n_estimators=100,
+                max_depth=10,         # Prevent overfitting + reduce memory
+                max_features='sqrt',  # Less memory, good performance
+                n_jobs=-1,
+                random_state=42
             ),
             'RandomForestRegressor': RandomForestRegressor(
-                random_state=42,
-                max_depth=5,
-                n_estimators=10,
+                n_estimators=100,
+                max_depth=10,
                 max_features='sqrt',
-                n_jobs=1,
-                min_samples_split=10,
-                min_samples_leaf=5
+                n_jobs=-1,
+                random_state=42
             ),
             'GradientBoostingClassifier': GradientBoostingClassifier(
-                random_state=42,
-                max_depth=3,        # Very shallow
-                n_estimators=10,    # Minimal estimators
-                learning_rate=0.1,
-                subsample=0.8       # Use less data per tree
+                n_estimators=100,
+                learning_rate=0.05,   # Better generalization
+                max_depth=3,
+                random_state=42
             ),
             'GradientBoostingRegressor': GradientBoostingRegressor(
-                random_state=42,
+                n_estimators=100,
+                learning_rate=0.05,
                 max_depth=3,
-                n_estimators=10,
-                learning_rate=0.1,
-                subsample=0.8
+                random_state=42
             ),
             'LogisticRegression': LogisticRegression(
-                random_state=42, 
-                max_iter=1000,
-                solver='lbfgs',     # Memory efficient solver
-                n_jobs=1
+                C=1.0,
+                solver='liblinear',   # Lighter and works well for small datasets
+                max_iter=500,
+                random_state=42
             ),
             'LinearRegression': LinearRegression(
-                n_jobs=1
+                n_jobs=1  # M1 prefers single-threaded sometimes
             ),
             'SVC': SVC(
-                random_state=42,
-                kernel='rbf',
                 C=1.0,
-                max_iter=1000       # Limit iterations
+                kernel='rbf',
+                gamma='scale',
+                max_iter=1000,
+                random_state=42
             ),
             'SVR': SVR(
                 kernel='rbf',
-                C=1.0
+                C=1.0,
+                epsilon=0.1
             ),
             'KNeighborsClassifier': KNeighborsClassifier(
-                n_neighbors=5,
-                n_jobs=1
+                n_neighbors=3,  # More sensitive, better for small datasets
+                weights='distance',
+                algorithm='auto'
             ),
             'KNeighborsRegressor': KNeighborsRegressor(
-                n_neighbors=5,
-                n_jobs=1
-            ),        
+                n_neighbors=3,
+                weights='distance',
+                algorithm='auto'
+            ),
             'DecisionTreeClassifier': DecisionTreeClassifier(
-                random_state=42,
-                max_depth=10,       # Limit depth
-                min_samples_split=10,
-                min_samples_leaf=5
+                max_depth=6,  # Limit depth to avoid overfitting
+                random_state=42
             ),
             'DecisionTreeRegressor': DecisionTreeRegressor(
-                random_state=42,
-                max_depth=10,
-                min_samples_split=10,
-                min_samples_leaf=5
+                max_depth=6,
+                random_state=42
             ),
             'KMeans': KMeans(
-                random_state=42, 
                 n_clusters=5,
-                max_iter=100,       # Limit iterations
-                n_init=5            # Reduce random initializations
+                init='k-means++',
+                n_init=5,  # Reduce memory
+                max_iter=300,
+                random_state=42
             ),
             'DBSCAN': DBSCAN(
-                eps=0.3,
-                min_samples=5
+                eps=0.5,
+                min_samples=3
             ),
             'AgglomerativeClustering': AgglomerativeClustering(
-                n_clusters=5
+                n_clusters=5,
+                linkage='ward'
             )
         }
-        
+
         return {name: model_map[name] for name in algorithm_names if name in model_map}
 
     async def evaluation_analysis_node(self, state: AgentState) -> AgentState:
@@ -1159,10 +1174,10 @@ async def main():
     """Example usage of the CSV ML Agent"""
     
     # Initialize agent (replace with your Groq API key)
-    agent = CSVMLAgent(groq_api_key="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")
+    agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/btc_1d_data_2018_to_2025.csv"
+    csv_file_path = "runnable/housing.csv"
     
     try:
         # Analyze CSV and build ML model
