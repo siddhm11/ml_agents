@@ -219,7 +219,7 @@ class CSVMLAgent:
             'memory_usage': df.memory_usage(deep=True).sum(),
             'missing_values': df.isnull().sum().to_dict(),
             'duplicate_rows': df.duplicated().sum(),
-            'sample_data': df.head(10).to_dict()
+            'sample_data': df.head().to_dict()
         }
         
         # Numerical statistics
@@ -470,284 +470,49 @@ class CSVMLAgent:
 
 
     async def feature_analysis_node(self, state: AgentState) -> AgentState:
-        """Enhanced LLM-powered feature analysis with intelligent filtering and selection"""
-        logger.info("Performing intelligent feature analysis with LLM")
+        """LLM analyzes features and relationships"""
+        logger.info("Analyzing features using LLM")
         
-        if state.get('raw_data') is None or not state.get('feature_columns'):
-            return state
-        
-        df = state['raw_data']
-        initial_features = state['feature_columns']
-        target_col = state['target_column']
-        
-        # Statistical pre-filtering to remove obviously poor features
-        filtered_features = []
-        feature_stats = {}
-        
-        for col in initial_features:
-            if col not in df.columns:
-                continue
-                
-            # Calculate comprehensive statistics
-            missing_pct = df[col].isnull().mean() * 100
-            nunique = df[col].nunique()
-            dtype = df[col].dtype
+        if not state['raw_data'] is None and state['feature_columns']:
+            df = state['raw_data']
             
-            # Calculate correlation with target (if possible)
-            target_correlation = None
-            if target_col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
-                try:
-                    if pd.api.types.is_numeric_dtype(df[target_col]):
-                        target_correlation = abs(df[col].corr(df[target_col]))
-                    elif state['problem_type'] == 'classification':
-                        # For categorical targets, use mutual information
-                        from sklearn.feature_selection import mutual_info_classif
-                        mi_score = mutual_info_classif(df[col].values.reshape(-1, 1), df[target_col])[0]
-                        target_correlation = mi_score
-                except:
-                    target_correlation = None
+            # Calculate basic feature statistics
+            feature_info = {}
+            for col in state['feature_columns']:
+                if col in df.columns:
+                    feature_info[col] = {
+                        'dtype': str(df[col].dtype),
+                        'missing_pct': df[col].isnull().mean() * 100,
+                        'unique_values': df[col].nunique(),
+                        'sample_values': df[col].dropna().head().tolist()
+                    }
             
-            # Calculate variance for numeric features
-            variance = df[col].var() if pd.api.types.is_numeric_dtype(df[col]) else None
+            prompt = f"""
+            Analyze these features for the {state['problem_type']} problem:
             
-            feature_stats[col] = {
-                'dtype': str(dtype),
-                'missing_pct': missing_pct,
-                'unique_values': nunique,
-                'unique_ratio': nunique / len(df) if len(df) > 0 else 0,
-                'target_correlation': target_correlation,
-                'variance': variance,
-                'sample_values': df[col].dropna().head(5).tolist()
-            }
+            Target Column: {state['target_column']}
+            Problem Type: {state['problem_type']}
             
-            # Pre-filtering rules based on statistical heuristics
-            should_keep = True
-            exclusion_reason = None
+            Feature Information:
+            {json.dumps(feature_info, indent=2, default=str)}
             
-            # Rule 1: Excessive missing values
-            if missing_pct > 50:
-                should_keep = False
-                exclusion_reason = f"Too many missing values ({missing_pct:.1f}%)"
+            Provide analysis on:
+            1. Feature importance and relevance
+            2. Feature engineering opportunities
+            3. Potential feature interactions
+            4. Features that might need special handling
             
-            # Rule 2: Constant or near-constant features
-            elif nunique <= 1:
-                should_keep = False
-                exclusion_reason = "Constant feature (no variance)"
-            
-            # Rule 3: High cardinality categorical features
-            elif pd.api.types.is_object_dtype(dtype) and nunique > min(100, len(df) * 0.5):
-                should_keep = False
-                exclusion_reason = f"High cardinality categorical ({nunique} unique values)"
-            
-            # Rule 4: Low variance numeric features
-            elif variance is not None and variance < 1e-8:
-                should_keep = False
-                exclusion_reason = "Near-zero variance"
-            
-            # Rule 5: Very low correlation with target
-            elif target_correlation is not None and target_correlation < 0.01:
-                should_keep = False
-                exclusion_reason = f"Very low correlation with target ({target_correlation:.4f})"
-            
-            if should_keep:
-                filtered_features.append(col)
-            else:
-                feature_stats[col]['exclusion_reason'] = exclusion_reason
-        
-        # Ensure we don't filter out too many features
-        if len(filtered_features) < max(3, len(initial_features) * 0.2):
-            logger.warning("Too many features filtered out, using correlation-based fallback")
-            # Keep top features by correlation/mutual information
-            corr_features = [(col, stats.get('target_correlation', 0)) 
-                            for col, stats in feature_stats.items() 
-                            if stats.get('target_correlation') is not None]
-            corr_features.sort(key=lambda x: x[1], reverse=True)
-            filtered_features = [col for col, _ in corr_features[:min(15, len(initial_features))]]
-        
-        # Include actual data samples for better LLM context
-        data_sample = df[filtered_features + [target_col]].head(10)
-        
-        # Enhanced prompt with data samples and structured output request
-        prompt = f"""
-    You are an expert ML feature engineer. Analyze these features for a {state['problem_type']} problem and SELECT the most relevant subset.
-
-    DATASET CONTEXT:
-    - Target Column: {target_col}
-    - Problem Type: {state['problem_type']}
-    - Dataset Shape: {df.shape}
-    - Initial Features: {len(initial_features)}
-    - Pre-filtered Features: {len(filtered_features)}
-
-    ACTUAL DATA SAMPLE (first 10 rows):
-    {data_sample.to_string()}
-
-    DETAILED FEATURE STATISTICS:
-    {json.dumps({k: v for k, v in feature_stats.items() if k in filtered_features}, indent=2, default=str)}
-
-    TASK: From the pre-filtered features, select the BEST subset for ML modeling.
-
-    SELECTION CRITERIA:
-    1. Strong relationship with target variable
-    2. Low multicollinearity between features
-    3. Sufficient data quality (low missing values)
-    4. Interpretability and business relevance
-    5. Feature diversity (avoid redundant features)
-
-    FEATURE ENGINEERING OPPORTUNITIES:
-    Suggest new features that could be created from existing ones.
-
-    OUTPUT FORMAT (JSON only):
-    {{
-        "selected_features": ["feature1", "feature2", ...],
-        "excluded_features": {{
-            "feature_name": "detailed_reason_for_exclusion"
-        }},
-        "feature_importance_ranking": [
-            {{"feature": "feature_name", "importance_score": 0.95, "reasoning": "why important"}}
-        ],
-        "feature_engineering_suggestions": [
-            {{"new_feature": "suggested_name", "formula": "how to create", "rationale": "why useful"}}
-        ],
-        "feature_interactions": [
-            {{"features": ["feat1", "feat2"], "interaction_type": "multiply/ratio/combine", "benefit": "expected improvement"}}
-        ],
-        "selection_summary": "brief explanation of selection strategy and reasoning"
-    }}
-
-    IMPORTANT: 
-    - Select 5-12 features maximum for optimal model performance
-    - Ensure selected features have good data quality and predictive power
-    - Exclude highly correlated redundant features
-    - Consider computational efficiency
-    """
-        
-        try:
-            response = await self.llm_client.get_llm_response(prompt, temperature=0.1)
-            
-            # Enhanced JSON parsing with multiple fallback strategies
-            selected_features = filtered_features  # Default fallback
+            Respond with actionable insights for ML model building.
+            """
             
             try:
-                # Try to extract JSON from response
-                json_patterns = [
-                    r'``````',  # JSON in code blocks
-                    r'``````',      # JSON in generic code blocks
-                    r'(\{[^{}]*"selected_features"[^{}]*\})',  # Look for our specific structure
-                    r'(\{.*?\})'  # Any JSON-like structure
-                ]
-                
-                parsed_response = None
-                for pattern in json_patterns:
-                    match = re.search(pattern, response, re.DOTALL)
-                    if match:
-                        try:
-                            json_str = match.group(1)
-                            parsed_response = json.loads(json_str)
-                            break
-                        except json.JSONDecodeError:
-                            continue
-                
-                if parsed_response and "selected_features" in parsed_response:
-                    llm_selected = parsed_response["selected_features"]
-                    
-                    # Validate LLM selections
-                    valid_selected = [feat for feat in llm_selected if feat in filtered_features]
-                    if valid_selected and len(valid_selected) >= 3:
-                        selected_features = valid_selected
-                    
-                    # Store comprehensive analysis results
-                    state['data_info']['feature_analysis'] = {
-                        "initial_feature_count": len(initial_features),
-                        "pre_filtered_count": len(filtered_features),
-                        "final_selected_count": len(selected_features),
-                        "selected_features": selected_features,
-                        "excluded_features": parsed_response.get("excluded_features", {}),
-                        "feature_importance_ranking": parsed_response.get("feature_importance_ranking", []),
-                        "feature_engineering_suggestions": parsed_response.get("feature_engineering_suggestions", []),
-                        "feature_interactions": parsed_response.get("feature_interactions", []),
-                        "selection_summary": parsed_response.get("selection_summary", ""),
-                        "feature_statistics": {k: v for k, v in feature_stats.items() if k in selected_features}
-                    }
-                    
-                else:
-                    # JSON parsing failed, use statistical fallback
-                    logger.warning("LLM JSON parsing failed, using statistical feature selection")
-                    selected_features = self._statistical_feature_selection(
-                        df, filtered_features, target_col, state['problem_type']
-                    )
-                    
+                response = await self.llm_client.get_llm_response(prompt)
+                state['data_info']['feature_analysis'] = response
+                logger.info("Feature analysis completed")
             except Exception as e:
-                logger.error(f"Failed to parse LLM response: {e}")
-                selected_features = self._statistical_feature_selection(
-                    df, filtered_features, target_col, state['problem_type']
-                )
-            
-            # Update state with final selected features
-            state['feature_columns'] = selected_features
-            
-            logger.info(f"Feature selection complete: {len(initial_features)} → {len(filtered_features)} → {len(selected_features)} features")
-            logger.info(f"Selected features: {selected_features}")
-            
-        except Exception as e:
-            logger.error(f"Feature analysis failed: {e}")
-            # Emergency fallback to statistical selection
-            selected_features = self._statistical_feature_selection(
-                df, filtered_features, target_col, state['problem_type']
-            )
-            state['feature_columns'] = selected_features
-            state['error_messages'].append(f"Feature analysis failed, used statistical fallback: {str(e)}")
+                logger.error(f"Feature analysis failed: {e}")
         
         return state
-
-    def _statistical_feature_selection(self, df: pd.DataFrame, features: List[str], 
-                                    target_col: str, problem_type: str, max_features: int = 12) -> List[str]:
-        """Robust statistical feature selection fallback method"""
-        if not features or target_col not in df.columns:
-            return features[:max_features]
-        
-        try:
-            from sklearn.feature_selection import SelectKBest, f_classif, f_regression, mutual_info_classif, mutual_info_regression
-            from sklearn.preprocessing import LabelEncoder
-            from sklearn.impute import SimpleImputer
-            
-            # Prepare features
-            X = df[features].copy()
-            y = df[target_col].copy()
-            
-            # Handle missing values temporarily
-            numeric_features = X.select_dtypes(include=[np.number]).columns
-            categorical_features = X.select_dtypes(include=['object']).columns
-            
-            if len(numeric_features) > 0:
-                X[numeric_features] = SimpleImputer(strategy='mean').fit_transform(X[numeric_features])
-            if len(categorical_features) > 0:
-                for col in categorical_features:
-                    X[col] = LabelEncoder().fit_transform(X[col].astype(str))
-            
-            # Encode target if needed
-            if y.dtype == 'object':
-                y = LabelEncoder().fit_transform(y)
-            
-            # Select appropriate scoring function
-            if problem_type == 'classification':
-                score_func = f_classif
-            else:
-                score_func = f_regression
-            
-            # Apply feature selection
-            k = min(max_features, len(features))
-            selector = SelectKBest(score_func=score_func, k=k)
-            selector.fit(X, y)
-            
-            selected_indices = selector.get_support(indices=True)
-            selected_features = [features[i] for i in selected_indices]
-            
-            logger.info(f"Statistical selection: {len(features)} → {len(selected_features)} features")
-            return selected_features
-            
-        except Exception as e:
-            logger.error(f"Statistical feature selection failed: {e}")
-            return features[:max_features]  # Last resort
 
     async def algorithm_recommendation_node(self, state: AgentState) -> AgentState:
         """LLM recommends optimal algorithms with correct problem type mapping"""
@@ -888,21 +653,21 @@ class CSVMLAgent:
                     raise ValueError(f"Missing '{key}' in data_info")
             
             prompt = f"""
-                Design optimal preprocessing steps for this dataset:
-                Problem Type: {state.get('problem_type', 'Unknown')}
-                Missing Values: {data_info['missing_values']}
-                Data Types: {data_info['dtypes']}
-                Recommended Algorithms: {state.get('recommended_algorithms', [])}
-                
-                Design preprocessing pipeline considering:
-                1. Missing value imputation
-                2. Categorical encoding
-                3. Feature scaling
-                4. Outlier handling
-                5. Feature selection
-                
-                Respond with a JSON list of ordered preprocessing steps like:
-                ["imputation", "encoding", "scaling", "outlier_removal", "feature_selection"]
+            Design optimal preprocessing steps for this dataset:
+            Problem Type: {state.get('problem_type', 'Unknown')}
+            Missing Values: {data_info['missing_values']}
+            Data Types: {data_info['dtypes']}
+            Recommended Algorithms: {state.get('recommended_algorithms', [])}
+            
+            Design preprocessing pipeline considering:
+            1. Missing value imputation
+            2. Categorical encoding
+            3. Feature scaling
+            4. Outlier handling
+            5. Feature selection
+            
+            Respond with a JSON list of ordered preprocessing steps like:
+            ["imputation", "encoding", "scaling", "outlier_removal", "feature_selection"]
             """
             
             response = await self.llm_client.get_llm_response(prompt)
@@ -1008,8 +773,7 @@ class CSVMLAgent:
                         le = LabelEncoder()
                         y = le.fit_transform(y)
                         logger.info(1)
-                        logger.info(f"Target shape after encoding: {y.shape}")
-                        logger.info(f"Target sample values: {y[:5]}")
+                        logger.info(y.head())
                     
                     log_target = False
                     if state['problem_type'] == 'regression':
@@ -1027,7 +791,7 @@ class CSVMLAgent:
 
 
                 X_train, X_test, y_train, y_test = train_test_split(
-                    X_processed, y, test_size=0.2, random_state=42
+                    X_processed, y, test_size=0.1, random_state=42
                 )
                 
                 # Train models
@@ -1149,28 +913,13 @@ class CSVMLAgent:
         """Get memory-optimized and better-performing model instances for M1 MacBook Pro."""
         
         model_map = {
-            'RandomForestRegressor': RandomForestRegressor(
-                n_estimators=200,  # More trees for better performance
-                max_depth=15,      # Deeper for real estate complexity
-                min_samples_split=5,
-                min_samples_leaf=2,
-                max_features='sqrt',
+            'RandomForestClassifier': RandomForestClassifier(
+                n_estimators=100,
+                max_depth=10,         # Prevent overfitting + reduce memory
+                max_features='sqrt',  # Less memory, good performance
                 n_jobs=-1,
                 random_state=42
             ),
-            'GradientBoostingRegressor': GradientBoostingRegressor(
-                n_estimators=200,
-                learning_rate=0.1,
-                max_depth=6,
-                min_samples_split=5,
-                random_state=42
-            ),
-            'XGBRegressor': XGBRegressor(  # Add XGBoost
-                n_estimators=200,
-                learning_rate=0.1,
-                max_depth=6,
-                random_state=42
-            ) ,
             'RandomForestRegressor': RandomForestRegressor(
                 n_estimators=100,
                 max_depth=10,
@@ -1184,7 +933,7 @@ class CSVMLAgent:
                 max_depth=3,
                 random_state=42
             ),
-            'XGBClassifier': XGBClassifier(  # Add XGBoost
+            'GradientBoostingRegressor': GradientBoostingRegressor(
                 n_estimators=100,
                 learning_rate=0.05,
                 max_depth=3,
@@ -1336,17 +1085,18 @@ class CSVMLAgent:
             result = await self.graph.ainvoke(initial_state)
             
             # Prepare results
+            # In analyze_csv method, modify the analysis_results:
             analysis_results = {
                 'csv_path': result['csv_path'],
                 'data_shape': result['data_info'].get('shape', None),
                 'problem_type': result['problem_type'],
                 'target_column': result['target_column'],
                 'feature_columns': result['feature_columns'],
-                'all_models': result['trained_models'],
+                'all_models': result['trained_models'],  # ADD THIS LINE
                 'best_model': result['best_model'],
                 'model_performance': result['evaluation_results'],
                 'recommendations': result['final_recommendations'],
-                'errors': result.get('error_messages', [])
+                'errors': result['error_messages']
             }
 
             
@@ -1355,13 +1105,10 @@ class CSVMLAgent:
             
         except Exception as e:
             logger.error(f"CSV analysis failed: {e}")
-            logger.error(f"Exception type: {type(e)}")
-            logger.error(f"Exception repr: {repr(e)}")
             return {
                 'csv_path': csv_path,
                 'error': str(e),
-                'status': 'failed',
-                'errors': ['CSV analysis failed: ' + str(e)]
+                'status': 'failed'
             }
     
     def save_model(self, model_info: Dict[str, Any], filepath: str):
@@ -1427,17 +1174,17 @@ async def main():
     """Example usage of the CSV ML Agent"""
     
     # Initialize agent (replace with your Groq API key)
-    agent = CSVMLAgent(groq_api_key="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")
+    agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/Mumbai.csv"
+    csv_file_path = "runnable/housing.csv"
     
     try:
         # Analyze CSV and build ML model
         results = await agent.analyze_csv(csv_file_path)
         
         # Print results
-        print("\n" + "="*50) 
+        print("\n" + "="*50)
         print("CSV ML ANALYSIS RESULTS")
         print("="*50)
         
@@ -1489,7 +1236,7 @@ async def main():
             agent.save_model(results['best_model'], "runnable/z.joblib")
             print(f"💾 Best model saved to: runnable/z.joblib")
         
-        if results.get('errors'):
+        if results['errors']:
             print(f"\n⚠️  Warnings/Errors:")
             for error in results['errors']:
                 print(f"   • {error}")
