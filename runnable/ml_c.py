@@ -1011,14 +1011,6 @@ class CSVMLAgent:
                         logger.info(1)
                         logger.info(f"Target shape after encoding: {y.shape}")
                         logger.info(f"Target sample values: {y[:5]}")
-                    
-                    log_target = False
-                    if state['problem_type'] == 'regression':
-                        print(y.skew())
-                        if abs(y.skew()) > 1:
-                            logger.info("Applying log1p transform to skewed target")
-                            y = np.log1p(y)
-                            log_target = True
 
                     # Split data
                 except Exception as e:
@@ -1034,6 +1026,8 @@ class CSVMLAgent:
                 # Train models
                 models = self._get_model_instances(state['recommended_algorithms'])
                 trained_models = {}
+                with open("runnable/feature_names.json", "w") as f:
+                    json.dump(state['feature_columns'], f)
                 
                 for name, model in models.items():
                     try:
