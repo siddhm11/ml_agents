@@ -207,7 +207,7 @@ def main():
     # File paths
     MODEL_PATH = "runnable/z.joblib"
     FEATURE_NAMES_PATH = "runnable/feature_names.json"
-    PREDICTION_DATA_PATH = "runnable/preddata2.csv"
+    PREDICTION_DATA_PATH = "runnable/preddata.csv"
     
     try:
         # Initialize predictor
