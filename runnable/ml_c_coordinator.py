@@ -393,7 +393,20 @@ class MultiAgentCoordinator:
         logger.info(f"Starting multi-agent ML coordination for: {csv_path}")
         
         # Initialize state
-        initial_state = CoordinatorState(csv_path=csv_path)
+        # To this:
+        initial_state = {
+            'csv_path': csv_path,
+            'raw_data': None,
+            'data_info': {},
+            'selected_columns': [],
+            'agent1_results': {},
+            'agent2_results': {},
+            'model_paths': {},
+            'selected_features': {},
+            'error_messages': [],
+            'final_summary': ""
+        }
+
         
         try:
             # Run the coordination workflow
@@ -401,16 +414,17 @@ class MultiAgentCoordinator:
             
             # Return comprehensive results
             return {
-                'csv_path': result['csv_path'],
-                'selected_columns': result['selected_columns'],
-                'agent1_results': result['agent1_results'],
-                'agent2_results': result['agent2_results'],
-                'model_paths': result['model_paths'],
-                'selected_features': result['selected_features'],
-                'final_summary': result['final_summary'],
-                'errors': result['error_messages'],
+                'csv_path': result.get('csv_path', csv_path),
+                'selected_columns': result.get('selected_columns', []),
+                'agent1_results': result.get('agent1_results', {}),
+                'agent2_results': result.get('agent2_results', {}),
+                'model_paths': result.get('model_paths', {}),
+                'selected_features': result.get('selected_features', {}),
+                'final_summary': result.get('final_summary', ''),
+                'errors': result.get('error_messages', []),  # Safe access
                 'status': 'completed'
             }
+
             
         except Exception as e:
             logger.error(f"Multi-agent coordination failed: {e}")
@@ -425,7 +439,7 @@ async def main():
     """Example usage of the Multi-Agent Coordinator"""
     
     # Initialize coordinator with your Groq API key
-    coordinator = MultiAgentCoordinator(groq_api_key="your_groq_api_key_here")
+    coordinator = MultiAgentCoordinator(groq_api_key="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")
     
     # Run multi-agent analysis
     csv_file_path = "runnable/housing.csv"  # Your CSV file
