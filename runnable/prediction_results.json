@@ -1,77 +1,87 @@
 {
   "model_name": "GradientBoostingRegressor",
   "model_metrics": {
-    "mse": 13657.17121663495,
-    "rmse": 116.8639003997169,
-    "r2": 0.7011494841617363,
-    "cv_mean": -15423.061891131441,
-    "cv_std": 740.4976072915049,
+    "mse": 2233667524.260926,
+    "rmse": 47261.6919318482,
+    "r2": 0.8295442444801154,
+    "cv_mean": -2291583204.1258426,
+    "cv_std": 84610214.83907491,
     "cv_scores": [
-      -14440.589181636433,
-      -15708.988152360349,
-      -15264.637884189939,
-      -15043.053566239296,
-      -16658.040671231196
+      -2263985814.787249,
+      -2215416962.566237,
+      -2289175888.4529696,
+      -2236064810.290309,
+      -2453272544.5324497
     ]
   },
   "predictions": [
-    125.85594979695682,
-    64.95387039279431,
-    71.12918389266409,
-    96.79713300032087,
-    345.42937652916345
+    309138.03550338256,
+    296280.1378623096,
+    277912.8638903817,
+    127913.99651378025,
+    154135.40327640585
   ],
   "probabilities": null,
   "input_data": [
     {
-      "bhk": 3,
-      "type": "Apartment",
-      "locality": "Lak And Hanware The Residency Tower",
-      "area": 685,
-      "region": "Andheri West",
-      "status": "Ready to move",
-      "age": "New",
-      "price_lakhs": 250.0
+      "longitude": -122.23,
+      "latitude": 37.88,
+      "housing_median_age": 41.0,
+      "total_rooms": 880.0,
+      "total_bedrooms": 129.0,
+      "population": 322.0,
+      "households": 126.0,
+      "median_income": 8.3252,
+      "median_house_value": 452600.0,
+      "ocean_proximity": "NEAR BAY"
     },
     {
-      "bhk": 2,
-      "type": "Apartment",
-      "locality": "Radheya Sai Enclave Building No 2",
-      "area": 640,
-      "region": "Naigaon East",
-      "status": "Under Construction",
-      "age": "New",
-      "price_lakhs": 52.51
+      "longitude": -122.22,
+      "latitude": 37.86,
+      "housing_median_age": 21.0,
+      "total_rooms": 7099.0,
+      "total_bedrooms": 1106.0,
+      "population": 2401.0,
+      "households": 1138.0,
+      "median_income": 8.3014,
+      "median_house_value": 358500.0,
+      "ocean_proximity": "NEAR BAY"
     },
     {
-      "bhk": 2,
-      "type": "Apartment",
-      "locality": "Romell Serene",
-      "area": 610,
-      "region": "Borivali West",
-      "status": "Under Construction",
-      "age": "New",
-      "price_lakhs": 173.0
+      "longitude": -122.24,
+      "latitude": 37.85,
+      "housing_median_age": 52.0,
+      "total_rooms": 1467.0,
+      "total_bedrooms": 190.0,
+      "population": 496.0,
+      "households": 177.0,
+      "median_income": 7.2574,
+      "median_house_value": 352100.0,
+      "ocean_proximity": "NEAR BAY"
     },
     {
-      "bhk": 2,
-      "type": "Apartment",
-      "locality": "Soundlines Codename Urban Rainforest",
-      "area": 876,
-      "region": "Panvel",
-      "status": "Under Construction",
-      "age": "New",
-      "price_lakhs": 59.98
+      "longitude": -117.95,
+      "latitude": 33.84,
+      "housing_median_age": 18.0,
+      "total_rooms": 3418.0,
+      "total_bedrooms": 815.0,
+      "population": 1961.0,
+      "households": 773.0,
+      "median_income": 3.65,
+      "median_house_value": 171400.0,
+      "ocean_proximity": "<1H OCEAN"
     },
     {
-      "bhk": 3,
-      "type": "Apartment",
-      "locality": "Konark Alpha Residency",
-      "area": 1525,
-      "region": "Borivali West",
-      "status": "Ready to move",
-      "age": "Resale",
-      "price_lakhs": 325.0
+      "longitude": -117.94,
+      "latitude": 33.83,
+      "housing_median_age": 20.0,
+      "total_rooms": 812.0,
+      "total_bedrooms": 192.0,
+      "population": 494.0,
+      "households": 172.0,
+      "median_income": 3.25,
+      "median_house_value": 350000.0,
+      "ocean_proximity": "<1H OCEAN"
     }
   ],
   "num_predictions": 5
