@@ -38,6 +38,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from xgboost import XGBRegressor, XGBClassifier 
 from catboost import CatBoostClassifier, CatBoostRegressor
+from sklearn.model_selection import GridSearchCV, cross_val_score
 # LangGraph
 from langgraph.graph import StateGraph, END
 from typing_extensions import TypedDict
@@ -796,13 +797,12 @@ class CSVMLAgent:
             elif state['problem_type'] == 'regression':
                 available_algorithms = [
                     'RandomForestRegressor', 'GradientBoostingRegressor', 'LinearRegression',
-                    'SVR', 'KNeighborsRegressor', 'DecisionTreeRegressor'
+                    'KNeighborsRegressor', 'DecisionTreeRegressor'
                 ]
                 aliases = {
                     'random forest': 'RandomForestRegressor',
                     'gradient boosting': 'GradientBoostingRegressor',
                     'linear regression': 'LinearRegression',
-                    'svr': 'SVR', 'support vector': 'SVR',
                     'knn': 'KNeighborsRegressor', 'k-neighbors': 'KNeighborsRegressor',
                     'decision tree': 'DecisionTreeRegressor'
                 }
@@ -1029,12 +1029,23 @@ class CSVMLAgent:
                 with open("runnable/feature_names.json", "w") as f:
                     json.dump(state['feature_columns'], f)
                 
+                # Then in your training loop:
                 for name, model in models.items():
                     try:
-                        logger.info(f"Training {name}...")
-                        model.fit(X_train, y_train)
+                        logger.info(f"Training and optimizing {name}...")
+                        
+                        # OPTION 1: Optimize first, then train and evaluate
+                        optimized_model = self._optimize_model(model, X_train, y_train, state['problem_type'])
+                        
+                        # Cross-validation on the optimized model (creates a fresh copy for CV)
+                        cv_scores = cross_val_score(optimized_model, X_train, y_train, cv=5, 
+                                                scoring='accuracy' if state['problem_type'] == 'classification' else 'neg_mean_squared_error')
+                        
+                        # Now fit the optimized model and make predictions
+                        optimized_model.fit(X_train, y_train)
                         logger.info(f"Successfully trained {name}")
-                        y_pred = model.predict(X_test)
+                        
+                        y_pred = optimized_model.predict(X_test)
                         
                         # Calculate metrics
                         if state['problem_type'] == 'classification':
@@ -1051,13 +1062,20 @@ class CSVMLAgent:
                                 'r2': r2_score(y_test, y_pred)
                             }
                         
+                        # Add cross-validation results to metrics
+                        metrics.update({
+                            'cv_mean': cv_scores.mean(),
+                            'cv_std': cv_scores.std(),
+                            'cv_scores': cv_scores.tolist()
+                        })
+                        
                         trained_models[name] = {
-                            'model': model,
+                            'model': optimized_model,  # Store the optimized model
                             'metrics': metrics,
                             'predictions': y_pred.tolist()
                         }
                         
-                        # ADD THIS: Log each model's performance immediately
+                        # Log each model's performance immediately
                         logger.info(f"✅ {name} Training Complete:")
                         for metric, value in metrics.items():
                             if isinstance(value, float):
@@ -1068,10 +1086,11 @@ class CSVMLAgent:
 
                     except Exception as e:
                         logger.error(f"Failed to train {name}: {e}")
-                
+                        state['error_messages'].append(f"Failed to train {name}: {str(e)}")
+
+                # Store trained models
                 state['trained_models'] = trained_models
                 
-                # Find best model
                 # Find best model
                 if trained_models:
                     logger.info(f"Selecting best from {len(trained_models)} trained models")
@@ -1108,6 +1127,32 @@ class CSVMLAgent:
             state['error_messages'].append(f"Model training failed: {str(e)}")
         
         return state
+
+    
+    def _optimize_model(self, model, X_train, y_train, problem_type):
+        """Quick hyperparameter optimization"""
+        from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier
+        
+        if isinstance(model, (RandomForestRegressor, RandomForestClassifier)):
+            param_grid = {
+                'n_estimators': [100, 200],
+                'max_depth': [10, 15, None],
+                'min_samples_split': [2, 5]
+            }
+        elif isinstance(model, (GradientBoostingRegressor, GradientBoostingClassifier)):
+            param_grid = {
+                'n_estimators': [100, 200],
+                'learning_rate': [0.05, 0.1],
+                'max_depth': [3, 6]
+            }
+        else:
+            return model  # No optimization for other models
+        
+        scorer = 'neg_mean_squared_error' if problem_type == 'regression' else 'accuracy'
+        grid_search = GridSearchCV(model, param_grid, cv=3, scoring=scorer, n_jobs=-1)
+        grid_search.fit(X_train, y_train)
+        return grid_search.best_estimator_
+
     
     def _preprocess_features(self, X: pd.DataFrame, steps: List[str]) -> np.ndarray:
         """Apply preprocessing steps"""
@@ -1147,17 +1192,18 @@ class CSVMLAgent:
             'RandomForestRegressor': RandomForestRegressor(
                 n_estimators=200,  # More trees for better performance
                 max_depth=15,      # Deeper for real estate complexity
-                min_samples_split=5,
-                min_samples_leaf=2,
+                min_samples_split=10,
+                min_samples_leaf=5,
                 max_features='sqrt',
                 n_jobs=-1,
                 random_state=42
             ),
             'GradientBoostingRegressor': GradientBoostingRegressor(
-                n_estimators=200,
+                n_estimators=150,
                 learning_rate=0.1,
                 max_depth=6,
-                min_samples_split=5,
+                min_samples_split=10,
+                subsample=0.8,
                 random_state=42
             ),
             'XGBRegressor': XGBRegressor(  # Add XGBoost
@@ -1166,25 +1212,29 @@ class CSVMLAgent:
                 max_depth=6,
                 random_state=42
             ) ,
-            'RandomForestRegressor': RandomForestRegressor(
-                n_estimators=100,
-                max_depth=10,
-                max_features='sqrt',
-                n_jobs=-1,
-                random_state=42
-            ),
             'GradientBoostingClassifier': GradientBoostingClassifier(
                 n_estimators=100,
                 learning_rate=0.05,   # Better generalization
                 max_depth=3,
                 random_state=42
             ),
-            'LogisticRegression': LogisticRegression(
-                C=1.0,
-                solver='liblinear',   # Lighter and works well for small datasets
-                max_iter=500,
+            'XGBClassifier': XGBClassifier(
+                n_estimators=100,
+                learning_rate=0.05,
+                max_depth=3,
+                colsample_bytree=0.8,  # This is valid for XGBoost
                 random_state=42
             ),
+            'RandomForestClassifier': RandomForestClassifier(
+                n_estimators=100,
+                max_depth=15,
+                min_samples_split=10,
+                min_samples_leaf=5,
+                max_features='sqrt',
+                n_jobs=-1,
+                random_state=42
+            ),
+            'LogisticRegression': LogisticRegression(),
             'LinearRegression': LinearRegression(
                 n_jobs=1  # M1 prefers single-threaded sometimes
             ),
@@ -1194,11 +1244,6 @@ class CSVMLAgent:
                 gamma='scale',
                 max_iter=1000,
                 random_state=42
-            ),
-            'SVR': SVR(
-                kernel='rbf',
-                C=1.0,
-                epsilon=0.1
             ),
             'KNeighborsClassifier': KNeighborsClassifier(
                 n_neighbors=3,  # More sensitive, better for small datasets
@@ -1215,7 +1260,9 @@ class CSVMLAgent:
                 random_state=42
             ),
             'DecisionTreeRegressor': DecisionTreeRegressor(
-                max_depth=6,
+                max_depth=12,
+                min_samples_split=20,
+                min_samples_leaf=10,
                 random_state=42
             ),
             'KMeans': KMeans(
@@ -1419,7 +1466,7 @@ async def main():
     agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/Mumbai House Prices.csv"
+    csv_file_path = "runnable/housing.csv"
     
     try:
         # Analyze CSV and build ML model
