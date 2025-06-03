@@ -1,0 +1,78 @@
+{
+  "model_name": "GradientBoostingRegressor",
+  "model_metrics": {
+    "mse": 13657.17121663495,
+    "rmse": 116.8639003997169,
+    "r2": 0.7011494841617363,
+    "cv_mean": -15423.061891131441,
+    "cv_std": 740.4976072915049,
+    "cv_scores": [
+      -14440.589181636433,
+      -15708.988152360349,
+      -15264.637884189939,
+      -15043.053566239296,
+      -16658.040671231196
+    ]
+  },
+  "predictions": [
+    125.85594979695682,
+    64.95387039279431,
+    71.12918389266409,
+    96.79713300032087,
+    345.42937652916345
+  ],
+  "probabilities": null,
+  "input_data": [
+    {
+      "bhk": 3,
+      "type": "Apartment",
+      "locality": "Lak And Hanware The Residency Tower",
+      "area": 685,
+      "region": "Andheri West",
+      "status": "Ready to move",
+      "age": "New",
+      "price_lakhs": 250.0
+    },
+    {
+      "bhk": 2,
+      "type": "Apartment",
+      "locality": "Radheya Sai Enclave Building No 2",
+      "area": 640,
+      "region": "Naigaon East",
+      "status": "Under Construction",
+      "age": "New",
+      "price_lakhs": 52.51
+    },
+    {
+      "bhk": 2,
+      "type": "Apartment",
+      "locality": "Romell Serene",
+      "area": 610,
+      "region": "Borivali West",
+      "status": "Under Construction",
+      "age": "New",
+      "price_lakhs": 173.0
+    },
+    {
+      "bhk": 2,
+      "type": "Apartment",
+      "locality": "Soundlines Codename Urban Rainforest",
+      "area": 876,
+      "region": "Panvel",
+      "status": "Under Construction",
+      "age": "New",
+      "price_lakhs": 59.98
+    },
+    {
+      "bhk": 3,
+      "type": "Apartment",
+      "locality": "Konark Alpha Residency",
+      "area": 1525,
+      "region": "Borivali West",
+      "status": "Ready to move",
+      "age": "Resale",
+      "price_lakhs": 325.0
+    }
+  ],
+  "num_predictions": 5
+}

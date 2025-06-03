@@ -207,7 +207,7 @@ def main():
     # File paths
     MODEL_PATH = "runnable/z.joblib"
     FEATURE_NAMES_PATH = "runnable/feature_names.json"
-    PREDICTION_DATA_PATH = "runnable/preddata.csv"
+    PREDICTION_DATA_PATH = "runnable/preddata2.csv"
     
     try:
         # Initialize predictor
@@ -232,33 +232,6 @@ def main():
         print(f"❌ Error during prediction: {e}")
         logger.error(f"Prediction failed: {e}")
 
-# Example of predicting a single row
-def predict_single_example():
-    """Example of how to predict a single row"""
-    
-    # Initialize predictor
-    predictor = ModelPredictor("runnable/z.joblib", "runnable/feature_names.json")
-    
-    # Example single row (replace with your actual data)
-    single_row = {
-        'feature1': 100,
-        'feature2': 25.5,
-        'feature3': 'category_a',
-        # ... add all your features here
-    }
-    
-    # Make prediction
-    result = predictor.predict_single_row(single_row)
-    
-    print(f"Single Row Prediction:")
-    print(f"Input: {result['input']}")
-    print(f"Prediction: {result['prediction']}")
-    if result['probability']:
-        print(f"Probability: {result['probability']}")
-
 if __name__ == "__main__":
     # Run the main prediction
     main()
-    
-    # Uncomment to test single row prediction
-    # predict_single_example()
