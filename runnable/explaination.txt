@@ -1,0 +1,117 @@
+LangGraph Workflow Architecture - Node Analysis
+Data Processing Nodes (No LLM)
+1. CSV Loader Node
+Purpose: Pure data ingestion and validation
+Functionality:
+Detects file encoding automatically
+Tests multiple CSV separators (,, ;, \t, |)
+Validates file existence and readability
+Loads raw DataFrame into agent state
+LLM Usage: None - relies on pandas and chardet libraries
+Output: Raw DataFrame ready for analysis
+2. Initial Inspection Node
+Purpose: Statistical data profiling and metadata extraction
+Functionality:
+Calculates dataset shape, column types, memory usage
+Generates descriptive statistics for numeric columns
+Analyzes categorical column distributions and unique values
+Identifies missing values and duplicate rows
+Creates sample data preview
+LLM Usage: None - pure statistical analysis using pandas
+Output: Comprehensive data profile dictionary
+3. Model Training Node
+Purpose: Core ML model training and optimization
+Functionality:
+Applies preprocessing pipeline to features
+Splits data into train/test sets
+Trains multiple algorithms simultaneously
+Performs hyperparameter optimization with GridSearchCV
+Executes cross-validation for robust evaluation
+Calculates performance metrics (accuracy, R², MSE, etc.)
+Selects best performing model
+LLM Usage: None - uses scikit-learn, XGBoost, CatBoost
+Output: Trained models with performance metrics
+LLM-Powered Intelligence Nodes
+4. Data Quality Assessment Node
+Purpose: Intelligent analysis of data quality issues
+LLM Model: DeepSeek-R1-Distill-Llama-70B via Groq API
+Functionality:
+Analyzes missing value patterns and distributions
+Identifies data inconsistencies and outliers
+Detects potential data quality challenges
+Provides cleaning recommendations
+Assesses ML modeling readiness
+LLM Prompt: Comprehensive dataset analysis with quality metrics
+Fallback: Statistical quality assessment if LLM fails
+5. Problem Identification Node
+Purpose: Determines optimal ML problem type and target variable
+LLM Model: DeepSeek-R1-Distill-Llama-70B
+Functionality:
+Analyzes dataset structure and content patterns
+Determines if problem is classification, regression, or clustering
+Identifies most suitable target column
+Selects appropriate feature columns
+Provides reasoning for decisions
+LLM Prompt: JSON-structured analysis of problem type determination
+Fallback: Heuristic-based logic using data types and column names
+6. Feature Analysis Node
+Purpose: Advanced feature selection and engineering recommendations
+LLM Model: DeepSeek-R1-Distill-Llama-70B
+Functionality:
+Performs statistical pre-filtering (correlation, variance, missing values)
+LLM analyzes feature importance and relationships
+Suggests feature engineering opportunities
+Identifies feature interactions and multicollinearity
+Recommends optimal feature subset (5-12 features)
+LLM Prompt: Detailed feature analysis with data samples and statistics
+Fallback: Statistical feature selection using SelectKBest
+7. Algorithm Recommendation Node
+Purpose: Intelligent algorithm selection based on data characteristics
+LLM Model: DeepSeek-R1-Distill-Llama-70B
+Functionality:
+Analyzes dataset size, complexity, and quality
+Recommends 3-5 algorithms in preference order
+Considers computational efficiency and problem requirements
+Maps recommendations to available algorithm implementations
+LLM Prompt: Algorithm recommendation based on dataset analysis
+Fallback: Default algorithm sets per problem type
+8. Preprocessing Strategy Node
+Purpose: Designs optimal data preprocessing pipeline
+LLM Model: DeepSeek-R1-Distill-Llama-70B
+Functionality:
+Determines imputation strategies for missing values
+Selects appropriate encoding methods for categorical data
+Recommends scaling techniques based on algorithms
+Designs outlier handling approaches
+Orders preprocessing steps optimally
+LLM Prompt: Preprocessing pipeline design with JSON output
+Fallback: Rule-based preprocessing based on data types
+9. Evaluation Analysis Node
+Purpose: Interprets model performance and provides insights
+LLM Model: DeepSeek-R1-Distill-Llama-70B
+Functionality:
+Compares performance across all trained models
+Explains why certain models performed better
+Identifies potential improvements and optimizations
+Provides model selection justification
+Suggests next steps for enhancement
+LLM Prompt: Model performance analysis with metrics comparison
+Fallback: Basic metric reporting if LLM unavailable
+10. Final Recommendation Node
+Purpose: Generates comprehensive deployment and maintenance strategy
+LLM Model: DeepSeek-R1-Distill-Llama-70B
+Functionality:
+Creates deployment strategy recommendations
+Suggests performance monitoring approaches
+Identifies data collection improvements
+Provides business impact analysis
+Outlines model maintenance procedures
+LLM Prompt: Final project recommendations and next steps
+Fallback: Generic ML best practices if LLM fails
+LLM Integration Architecture
+Error Handling: Each LLM node includes sophisticated fallback mechanisms
+Rate Limiting: Built-in delays and retry logic to handle API limitations
+JSON Parsing: Advanced regex-based extraction from LLM responses
+Temperature Control: Set to 0.1 for consistent, deterministic outputs
+Token Management: 4000 token limit to prevent API issues
+This hybrid architecture combines the precision of statistical analysis with the intelligence of LLMs, creating a robust agent that can handle diverse datasets while maintaining reliability through comprehensive fallback systems.
