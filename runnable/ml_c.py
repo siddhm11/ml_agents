@@ -36,7 +36,8 @@ from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+from xgboost import XGBRegressor, XGBClassifier 
+from catboost import CatBoostClassifier, CatBoostRegressor
 # LangGraph
 from langgraph.graph import StateGraph, END
 from typing_extensions import TypedDict
@@ -233,7 +234,7 @@ class CSVMLAgent:
             info['categorical_info'] = {
                 col: {
                     'unique_values': df[col].nunique(),
-                    'top_values': df[col].value_counts().head().to_dict()
+                    'top_values': df[col].value_counts().head(10).to_dict()
                 } for col in categorical_cols
             }
         
@@ -517,7 +518,7 @@ class CSVMLAgent:
                 'unique_ratio': nunique / len(df) if len(df) > 0 else 0,
                 'target_correlation': target_correlation,
                 'variance': variance,
-                'sample_values': df[col].dropna().head(5).tolist()
+                'sample_values': df[col].dropna().head(10).tolist()
             }
             
             # Pre-filtering rules based on statistical heuristics
@@ -975,7 +976,7 @@ class CSVMLAgent:
 
         try:
             df = state['raw_data'].copy()
-            print(df.head())
+            print(df.head(10))
             print(df.shape)
             # Prepare features and target
             logger.info(f"Feature columns: {state['feature_columns']}")
@@ -1181,12 +1182,6 @@ class CSVMLAgent:
             'GradientBoostingClassifier': GradientBoostingClassifier(
                 n_estimators=100,
                 learning_rate=0.05,   # Better generalization
-                max_depth=3,
-                random_state=42
-            ),
-            'XGBClassifier': XGBClassifier(  # Add XGBoost
-                n_estimators=100,
-                learning_rate=0.05,
                 max_depth=3,
                 random_state=42
             ),
@@ -1427,10 +1422,10 @@ async def main():
     """Example usage of the CSV ML Agent"""
     
     # Initialize agent (replace with your Groq API key)
-    agent = CSVMLAgent(groq_api_key="")
+    agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/Mumbai.csv"
+    csv_file_path = "runnable/Mumbai House Prices.csv"
     
     try:
         # Analyze CSV and build ML model
@@ -1480,8 +1475,8 @@ async def main():
                 else:
                     print(f"   {metric.upper()}: {value}")
         
-        print(f"\n💡 Recommendations:")
-        print(results['recommendations'])
+        # print(f"\n💡 Recommendations:")
+        # print(results['recommendations'])
                 
         # Save the best model
         if results['best_model']:

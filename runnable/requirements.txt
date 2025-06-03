@@ -7,3 +7,5 @@ seaborn
 matplotlib
 langchain-core 
 typing-extensions
+catboost
+xgboost
