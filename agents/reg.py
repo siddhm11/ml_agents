@@ -5,6 +5,9 @@ import json
 import re
 import logging
 import warnings
+import joblib
+
+
 warnings.filterwarnings('ignore')
 
 # Base agent import
@@ -147,6 +150,7 @@ class RegressionSpecialistAgent(CSVMLAgent):
             # Enhanced JSON parsing for regression-specific response
             try:
                 # Clean the response first
+                
                 cleaned_response = response.strip()
                 
                 # Remove thinking tags if present
@@ -491,7 +495,22 @@ class RegressionSpecialistAgent(CSVMLAgent):
                             'metrics': ensemble_model['metrics']
                         }
                         logger.info("🏆 Ensemble model selected as best performer!")
-            
+            # At the end of model_training_node, add:
+            try:
+                # Store metadata for saving
+                self.feature_columns = feature_names
+                self.target_column = state['target_column']
+                self.preprocessing_pipeline = preprocessing_pipeline
+                
+                # Save the best model
+                if state.get('best_model'):
+                    model_filename = f"agents/best_regression_model.joblib"
+                    self.save_model(state['best_model'], model_filename)
+                    logger.info(f"💾 Model saved as: {model_filename}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to save model: {e}")
+
             logger.info(f"🎯 Training completed: {len(trained_models)} models trained")
             logger.info(f"🏆 Best model: {state['best_model']['name']} (R² = {state['best_model']['metrics']['r2']:.4f})")
             
@@ -552,7 +571,6 @@ class RegressionSpecialistAgent(CSVMLAgent):
                 n_estimators=200, max_depth=15, min_samples_split=5,
                 min_samples_leaf=2, n_jobs=-1, random_state=42
             ),
-            'SVR': SVR(kernel='rbf', C=1.0, gamma='scale'),
             'KNeighborsRegressor': KNeighborsRegressor(
                 n_neighbors=5, weights='distance', algorithm='auto'
             ),
@@ -571,10 +589,9 @@ class RegressionSpecialistAgent(CSVMLAgent):
             return {name: model for name, model in base_models.items() if name in algorithm_names}
         else:
             return base_models
-
     def _advanced_regression_optimization(self, model, X_train, y_train, model_name, dataset_size):
-        """Advanced hyperparameter optimization for regression models"""
-        
+        """Advanced hyperparameter optimization for regression models with detailed logging"""
+
         param_grids = {
             'RandomForestRegressor': {
                 'n_estimators': [100, 200, 300],
@@ -601,26 +618,86 @@ class RegressionSpecialistAgent(CSVMLAgent):
             },
             'Lasso': {
                 'alpha': [0.0001, 0.001, 0.01, 0.1, 1.0]
-            },
-            'SVR': {
-                'C': [0.1, 1, 10, 100],
-                'gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
-                'kernel': ['rbf', 'poly']
             }
         }
-        
+
         param_grid = param_grids.get(model_name, {})
-        
+
         if param_grid:
             n_iter = 20 if dataset_size < 1000 else 50
+            
+            # Log optimization details
+            logger.info(f"🔍 Hyperparameter optimization for {model_name}:")
+            logger.info(f"   📊 Parameter grid: {param_grid}")
+            logger.info(f"   🎯 Trying {n_iter} parameter combinations")
+            logger.info(f"   🔄 Using 5-fold cross-validation")
+            
+            # Create search with verbose logging
             search = RandomizedSearchCV(
-                model, param_grid, n_iter=n_iter, cv=5,
-                scoring='neg_mean_squared_error', n_jobs=-1, random_state=42
+                model, param_grid, 
+                n_iter=n_iter, 
+                cv=5,
+                scoring='neg_mean_squared_error', 
+                n_jobs=-1, 
+                random_state=42,
+                verbose=2,  # This enables built-in logging
+                return_train_score=True
             )
+            
+            # Fit with progress tracking
+            import time
+            start_time = time.time()
+            
+            logger.info(f"⏱️ Starting hyperparameter search...")
             search.fit(X_train, y_train)
+            
+            optimization_time = time.time() - start_time
+            
+            # Log detailed results
+            logger.info(f"✅ Hyperparameter optimization completed in {optimization_time:.2f}s")
+            logger.info(f"🏆 Best parameters for {model_name}:")
+            
+            for param, value in search.best_params_.items():
+                logger.info(f"   {param}: {value}")
+            
+            logger.info(f"📈 Best CV score: {-search.best_score_:.4f} (RMSE)")
+            logger.info(f"📊 CV std: {search.cv_results_['std_test_score'][search.best_index_]:.4f}")
+            
+            # Log top 3 parameter combinations
+            results_df = pd.DataFrame(search.cv_results_)
+            top_3 = results_df.nlargest(3, 'mean_test_score')[['params', 'mean_test_score', 'std_test_score']]
+            
+            logger.info(f"🥇 Top 3 parameter combinations:")
+            for i, (idx, row) in enumerate(top_3.iterrows(), 1):
+                logger.info(f"   #{i}: {dict(row['params'])} → Score: {-row['mean_test_score']:.4f} ± {row['std_test_score']:.4f}")
+            
             return search.best_estimator_
-        
-        return model
+
+        else:
+            logger.info(f"ℹ️ No hyperparameter optimization for {model_name} - using default parameters")
+            return model
+
+
+    def save_model(self, model_info, filepath):
+        """Save trained model with metadata"""
+        try:
+            # Package everything needed for predictions
+            model_package = {
+                'model': model_info['model'],
+                'metrics': model_info['metrics'],
+                'feature_columns': self.feature_columns,
+                'target_column': self.target_column,
+                'preprocessing_pipeline': self.preprocessing_pipeline
+            }
+            
+            joblib.dump(model_package, filepath)
+            logger.info(f"✅ Model saved to {filepath}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save model: {e}")
+            return False
+
 
     def _regression_cross_validation(self, model, X_train, y_train):
         """Comprehensive cross-validation for regression"""
@@ -796,7 +873,7 @@ class RegressionSpecialistAgent(CSVMLAgent):
             regression_algorithms = {
                 'RandomForestRegressor', 'GradientBoostingRegressor', 'XGBRegressor',
                 'LinearRegression', 'Ridge', 'Lasso', 'ElasticNet',
-                'KNeighborsRegressor', 'DecisionTreeRegressor', 'SVR',
+                'KNeighborsRegressor', 'DecisionTreeRegressor', 
                 'CatBoostRegressor', 'LGBMRegressor'
             }
             
@@ -812,8 +889,6 @@ class RegressionSpecialistAgent(CSVMLAgent):
                 'knn': 'KNeighborsRegressor',
                 'k-neighbors': 'KNeighborsRegressor',
                 'decision tree': 'DecisionTreeRegressor',
-                'svm': 'SVR',
-                'support vector': 'SVR',
                 'catboost': 'CatBoostRegressor',
                 'lightgbm': 'LGBMRegressor'
             }
@@ -1145,10 +1220,10 @@ async def main():
     """Example usage of the RegressionSpecialistAgent"""
     
     # Initialize the regression specialist
-    agent = RegressionSpecialistAgent(groq_api_key="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")
+    agent = RegressionSpecialistAgent(groq_api_key="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")
     
     # Analyze a CSV file
-    results = await agent.analyze_csv("agents/Mumbai House Prices with Lakhs.csv")
+    results = await agent.analyze_csv("agents/housing.csv")
     
     print(f"🎯 Problem Type: {results['problem_type']}")
     print(f"📊 Target: {results['target_column']}")
