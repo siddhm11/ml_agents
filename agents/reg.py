@@ -1,33 +1,48 @@
-from mlc2 import CSVMLAgent, AgentState
+# Core libraries
 import pandas as pd
 import numpy as np
 import json
-from sklearn.feature_selection import SelectKBest, f_regression, mutual_info_regression
-from sklearn.preprocessing import StandardScaler
+import re
 import logging
-
-from sklearn.model_selection import RandomizedSearchCV, cross_val_score
-from sklearn.ensemble import ExtraTreesRegressor, AdaBoostRegressor, VotingRegressor
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, HuberRegressor
-from sklearn.svm import SVR
-from sklearn.neural_network import MLPRegressor
-from sklearn.metrics import mean_absolute_error, median_absolute_error, mean_absolute_percentage_error
-from sklearn.impute import SimpleImputer
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
 import warnings
 warnings.filterwarnings('ignore')
 
-import re
-import logging
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
+# Base agent import
+from mlc2 import CSVMLAgent, AgentState
+
+# Sklearn - Linear Models
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, HuberRegressor
+
+# Sklearn - Ensemble Methods
+from sklearn.ensemble import (
+    RandomForestRegressor, GradientBoostingRegressor, 
+    ExtraTreesRegressor, AdaBoostRegressor, VotingRegressor
+)
+
+# Sklearn - Other Models
+from sklearn.svm import SVR
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.neural_network import MLPRegressor
+
+# Sklearn - Preprocessing and Selection
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.feature_selection import SelectKBest, f_regression, mutual_info_regression
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+
+# Sklearn - Model Selection and Metrics
+from sklearn.model_selection import RandomizedSearchCV, cross_val_score, train_test_split
+from sklearn.metrics import (
+    mean_squared_error, r2_score, mean_absolute_error, 
+    median_absolute_error, mean_absolute_percentage_error
+)
+
+# External ML Libraries
 from xgboost import XGBRegressor
 
-
-logger = logging.getLogger(__name__)
-
-
+# Logging
 logger = logging.getLogger(__name__)
 
 class RegressionSpecialistAgent(CSVMLAgent):
@@ -59,16 +74,16 @@ class RegressionSpecialistAgent(CSVMLAgent):
                     'dtype': str(df[col].dtype),
                     'unique_count': df[col].nunique(),
                     'unique_ratio': df[col].nunique() / len(df),
-                    'variance': df[col].var(),
-                    'std': df[col].std(),
-                    'range': df[col].max() - df[col].min(),
+                    'variance': float(df[col].var()) if pd.notna(df[col].var()) else 0.0,
+                    'std': float(df[col].std()) if pd.notna(df[col].std()) else 0.0,
+                    'range': float(df[col].max() - df[col].min()) if pd.notna(df[col].max()) and pd.notna(df[col].min()) else 0.0,
                     'missing_pct': df[col].isnull().mean() * 100,
                     'sample_values': df[col].dropna().head(10).tolist(),
                     'distribution_info': {
-                        'mean': df[col].mean(),
-                        'median': df[col].median(),
-                        'q25': df[col].quantile(0.25),
-                        'q75': df[col].quantile(0.75)
+                        'mean': float(df[col].mean()) if pd.notna(df[col].mean()) else 0.0,
+                        'median': float(df[col].median()) if pd.notna(df[col].median()) else 0.0,
+                        'q25': float(df[col].quantile(0.25)) if pd.notna(df[col].quantile(0.25)) else 0.0,
+                        'q75': float(df[col].quantile(0.75)) if pd.notna(df[col].quantile(0.75)) else 0.0
                     }
                 }
         
@@ -104,58 +119,65 @@ class RegressionSpecialistAgent(CSVMLAgent):
         4. Identify potential regression challenges (multicollinearity, outliers, etc.)
         5. Suggest regression-specific preprocessing needs
         
-        RESPOND WITH JSON:
+        RESPOND WITH ONLY VALID JSON (no markdown, no extra text):
         {{
             "target_column": "best_regression_target",
             "target_reasoning": "detailed explanation why this is the best regression target",
             "target_suitability_score": 0.95,
-            "feature_columns": ["feature1", "feature2", ...],
+            "feature_columns": ["feature1", "feature2"],
             "feature_selection_reasoning": "why these features are relevant for regression",
             "regression_challenges": ["challenge1", "challenge2"],
             "preprocessing_recommendations": ["recommendation1", "recommendation2"],
             "target_characteristics": {{
-                "expected_range": [min_val, max_val],
-                "distribution_type": "normal/skewed/uniform/etc",
-                "transformation_needed": "log/sqrt/none/etc"
+                "expected_range": [0.0, 100.0],
+                "distribution_type": "normal",
+                "transformation_needed": "none"
             }},
             "feature_engineering_suggestions": ["suggestion1", "suggestion2"],
             "business_interpretation": "what this regression model would predict and why it matters"
         }}
         
-        IMPORTANT: Focus on finding the most meaningful continuous target variable for regression prediction.
+        IMPORTANT: Respond with ONLY the JSON object, no other text or formatting.
         """
         
         try:
             response = await self.llm_client.get_llm_response(prompt, temperature=0.1)
+            logger.info(f"🎯 LLM response for regression problem identification: {response}")
             
             # Enhanced JSON parsing for regression-specific response
             try:
-                # Extract JSON from LLM response
-                json_patterns = [
-                    r'``````',
-                    r'``````',
-                    r'(\{[^{}]*"target_column"[^{}]*\})',
-                    r'(\{.*?\})'
-                ]
+                # Clean the response first
+                cleaned_response = response.strip()
                 
-                parsed_response = None
-                for pattern in json_patterns:
-                    match = re.search(pattern, response, re.DOTALL)
-                    if match:
-                        try:
-                            json_str = match.group(1)
-                            # Clean thinking tags
-                            json_str = re.sub(r'<think>.*?</think>', '', json_str, flags=re.DOTALL)
-                            parsed_response = json.loads(json_str)
-                            break
-                        except json.JSONDecodeError:
-                            continue
+                # Remove thinking tags if present
+                cleaned_response = re.sub(r'<think>.*?</think>', '', cleaned_response, flags=re.DOTALL)
+                
+                # Remove markdown code blocks if present
+                if '```json' in cleaned_response:
+                    cleaned_response = re.sub(r'```json\s*', '', cleaned_response)
+                    cleaned_response = re.sub(r'```\s*$', '', cleaned_response)
+                elif '```' in cleaned_response:
+                    cleaned_response = re.sub(r'```\s*', '', cleaned_response)
+                    cleaned_response = re.sub(r'```\s*$', '', cleaned_response)
+                
+                # Try to find JSON object
+                json_match = re.search(r'\{.*\}', cleaned_response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    parsed_response = json.loads(json_str)
+                    logger.info(f"✅ Successfully parsed JSON response")
+                else:
+                    raise ValueError("No JSON object found in response")
                 
                 if parsed_response and "target_column" in parsed_response:
                     target_column = parsed_response["target_column"]
                     feature_columns = parsed_response.get("feature_columns", [])
                     
+                    logger.info(f"🎯 LLM suggested target: {target_column}")
+                    logger.info(f"🔧 LLM suggested features: {feature_columns}")
+                    
                     # Validate LLM selections for regression
+                    target_valid = False
                     if target_column and target_column in columns:
                         # Additional regression-specific validation
                         if target_column in numeric_cols:
@@ -163,24 +185,29 @@ class RegressionSpecialistAgent(CSVMLAgent):
                             target_variance = df[target_column].var()
                             
                             # Check if target is suitable for regression
-                            if target_unique_ratio > 0.05 and target_variance > 1e-10:
+                            if target_unique_ratio > 0.005 and pd.notna(target_variance) and target_variance > 1e-10:
                                 state['target_column'] = target_column
+                                target_valid = True
                                 logger.info(f"✅ LLM selected regression target: {target_column}")
                             else:
-                                logger.warning(f"LLM target {target_column} not suitable for regression, using fallback")
-                                target_column = None
+                                logger.warning(f"LLM target {target_column} not suitable for regression (unique_ratio: {target_unique_ratio}, variance: {target_variance})")
                         else:
-                            logger.warning(f"LLM selected non-numeric target {target_column}, using fallback")
-                            target_column = None
+                            logger.warning(f"LLM selected non-numeric target {target_column}")
+                    else:
+                        logger.warning(f"Target column {target_column} not found in dataset columns")
                     
                     # Validate feature columns
-                    if feature_columns and all(col in columns for col in feature_columns):
-                        valid_features = [col for col in feature_columns if col != state.get('target_column')]
-                        if len(valid_features) >= 2:
+                    features_valid = False
+                    if feature_columns and isinstance(feature_columns, list):
+                        valid_features = [col for col in feature_columns if col in columns and col != state.get('target_column')]
+                        if len(valid_features) >= 1:
                             state['feature_columns'] = valid_features
+                            features_valid = True
                             logger.info(f"✅ LLM selected {len(valid_features)} regression features")
                         else:
-                            feature_columns = None
+                            logger.warning("Not enough valid features from LLM")
+                    else:
+                        logger.warning("Invalid feature columns from LLM")
                     
                     # Store comprehensive regression analysis
                     state['data_info']['regression_analysis'] = {
@@ -195,12 +222,18 @@ class RegressionSpecialistAgent(CSVMLAgent):
                     }
                     
                     # If LLM selections are valid, we're done
-                    if state.get('target_column') and state.get('feature_columns'):
+                    if target_valid and features_valid:
                         logger.info(f"🎯 Regression setup complete - Target: {state['target_column']}, Features: {len(state['feature_columns'])}")
                         return state
-                
+                    else:
+                        logger.warning("LLM selections invalid, proceeding to fallback")
+                else:
+                    logger.warning("No valid JSON found or missing target_column key")
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM JSON response: {e}")
             except Exception as e:
-                logger.error(f"Failed to parse LLM regression response: {e}")
+                logger.error(f"Failed to process LLM regression response: {e}")
             
             # Intelligent regression-specific fallback
             logger.warning("Using intelligent regression fallback logic")
@@ -216,6 +249,9 @@ class RegressionSpecialistAgent(CSVMLAgent):
             ]
             
             for col in numeric_cols:
+                if col not in df.columns:
+                    continue
+                    
                 col_lower = col.lower()
                 priority_score = 0
                 
@@ -226,33 +262,40 @@ class RegressionSpecialistAgent(CSVMLAgent):
                         break
                 
                 # Statistical suitability
-                unique_ratio = df[col].nunique() / len(df)
-                variance = df[col].var()
-                missing_pct = df[col].isnull().mean()
-                
-                # Scoring based on regression suitability
-                if unique_ratio > 0.1:  # Continuous-like
-                    priority_score += unique_ratio * 5
-                if variance > 0:
-                    priority_score += min(np.log(variance + 1), 5)
-                if missing_pct < 0.1:  # Low missing values
-                    priority_score += 2
-                
-                target_candidates.append((col, priority_score))
+                try:
+                    unique_ratio = df[col].nunique() / len(df)
+                    variance = df[col].var()
+                    missing_pct = df[col].isnull().mean()
+                    
+                    # Scoring based on regression suitability
+                    if unique_ratio > 0.01:  # Reasonably continuous
+                        priority_score += unique_ratio * 5
+                    if pd.notna(variance) and variance > 0:
+                        priority_score += min(np.log(variance + 1), 5)
+                    if missing_pct < 0.1:  # Low missing values
+                        priority_score += 2
+                        
+                    target_candidates.append((col, priority_score))
+                except Exception as e:
+                    logger.warning(f"Error calculating priority for column {col}: {e}")
+                    continue
             
             # Sort by priority and select best target
             if target_candidates:
                 target_candidates.sort(key=lambda x: x[1], reverse=True)
                 state['target_column'] = target_candidates[0][0]
+                logger.info(f"🎯 Selected target by priority: {state['target_column']} (score: {target_candidates[0][1]:.2f})")
             elif numeric_cols:
-                # Emergency fallback: last numeric column
-                state['target_column'] = numeric_cols[-1]
+                # Emergency fallback: first numeric column
+                state['target_column'] = numeric_cols[0]
+                logger.warning(f"🔄 Emergency fallback target: {state['target_column']}")
             else:
                 # Critical fallback: last column (will likely fail in training)
                 state['target_column'] = columns[-1]
+                logger.error(f"⚠️ Critical fallback target (non-numeric): {state['target_column']}")
             
             # Select features (exclude target)
-            if state['target_column']:
+            if state.get('target_column'):
                 potential_features = [col for col in columns if col != state['target_column']]
                 
                 # Filter out obvious non-features for regression
@@ -269,45 +312,73 @@ class RegressionSpecialistAgent(CSVMLAgent):
                             should_include = False
                             break
                     
-                    # Exclude high-cardinality text columns
-                    if df[col].dtype == 'object' and df[col].nunique() > min(50, len(df) * 0.3):
+                    # Exclude high-cardinality text columns (but allow some)
+                    if df[col].dtype == 'object' and df[col].nunique() > min(100, len(df) * 0.5):
                         should_include = False
                     
                     if should_include:
                         filtered_features.append(col)
                 
                 state['feature_columns'] = filtered_features[:20]  # Limit features
+                
+                # Ensure we have at least one feature
+                if not state['feature_columns'] and potential_features:
+                    state['feature_columns'] = potential_features[:5]
+                    logger.warning("No features passed filtering, using first 5 potential features")
             
             # Log fallback results
             logger.info(f"🔄 Fallback regression setup:")
-            logger.info(f"   Target: {state['target_column']}")
-            logger.info(f"   Features: {len(state['feature_columns'])} columns")
+            logger.info(f"   Target: {state.get('target_column', 'None')}")
+            logger.info(f"   Features: {len(state.get('feature_columns', []))} columns")
             
             # Store fallback analysis
+            if 'data_info' not in state:
+                state['data_info'] = {}
             state['data_info']['regression_analysis'] = {
                 'method': 'intelligent_fallback',
                 'target_selection_method': 'keyword_and_statistical_analysis',
                 'target_priority_scores': dict(target_candidates) if target_candidates else {},
                 'preprocessing_recommendations': ['check_for_outliers', 'consider_feature_scaling', 'handle_missing_values'],
-                'business_interpretation': f"Predicting {state['target_column']} using {len(state['feature_columns'])} features"
+                'business_interpretation': f"Predicting {state.get('target_column', 'unknown')} using {len(state.get('feature_columns', []))} features"
             }
             
         except Exception as e:
-            logger.error(f"Regression problem identification failed: {e}")
+            logger.error(f"Regression problem identification failed completely: {e}")
             
             # Emergency fallback
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-            if numeric_cols:
-                state['target_column'] = numeric_cols[-1]
-                state['feature_columns'] = [col for col in columns if col != state['target_column']]
-            else:
-                state['target_column'] = columns[-1]
-                state['feature_columns'] = columns[:-1]
-            
-            state['error_messages'].append(f"Regression identification failed, used emergency fallback: {str(e)}")
+            try:
+                numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+                if numeric_cols:
+                    state['target_column'] = numeric_cols[-1]
+                    state['feature_columns'] = [col for col in columns if col != state['target_column']]
+                else:
+                    state['target_column'] = columns[-1] if columns else None
+                    state['feature_columns'] = columns[:-1] if len(columns) > 1 else []
+                
+                if 'error_messages' not in state:
+                    state['error_messages'] = []
+                state['error_messages'].append(f"Regression identification failed, used emergency fallback: {str(e)}")
+                
+                logger.error(f"⚠️ Emergency fallback: target={state.get('target_column')}, features={len(state.get('feature_columns', []))}")
+                
+            except Exception as emergency_error:
+                logger.error(f"Even emergency fallback failed: {emergency_error}")
+                # Set minimal valid state
+                state['target_column'] = columns[0] if columns else 'unknown'
+                state['feature_columns'] = columns[1:] if len(columns) > 1 else []
+                if 'error_messages' not in state:
+                    state['error_messages'] = []
+                state['error_messages'].append(f"Complete failure in problem identification: {str(emergency_error)}")
+        
+        # Ensure required keys exist
+        if 'target_column' not in state:
+            state['target_column'] = columns[0] if columns else 'unknown'
+        if 'feature_columns' not in state:
+            state['feature_columns'] = []
+        if 'error_messages' not in state:
+            state['error_messages'] = []
         
         return state
-
     def model_training_node(self, state: AgentState) -> AgentState:
         """
         Enhanced regression model training with comprehensive optimization
@@ -352,7 +423,7 @@ class RegressionSpecialistAgent(CSVMLAgent):
             
             # Store feature names for later use
             feature_names = state['feature_columns']
-            with open("runnable/feature_names.json", "w") as f:
+            with open("agents/feature_names.json", "w") as f:
                 json.dump(feature_names, f)
             
             # Train each model with advanced optimization
@@ -1074,10 +1145,10 @@ async def main():
     """Example usage of the RegressionSpecialistAgent"""
     
     # Initialize the regression specialist
-    agent = RegressionSpecialistAgent(groq_api_key="YOUR_GROQ_API_KEY")
+    agent = RegressionSpecialistAgent(groq_api_key="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")
     
     # Analyze a CSV file
-    results = await agent.analyze_csv("your_regression_dataset.csv")
+    results = await agent.analyze_csv("agents/Mumbai House Prices with Lakhs.csv")
     
     print(f"🎯 Problem Type: {results['problem_type']}")
     print(f"📊 Target: {results['target_column']}")

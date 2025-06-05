@@ -1,0 +1,11 @@
+pandas
+numpy
+scikit-learn
+xgboost
+catboost
+matplotlib
+seaborn
+groq
+langgraph
+chardet
+typing_extensions
