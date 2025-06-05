@@ -192,7 +192,7 @@ def main():
     predictions, results = load_and_predict(
         model_path="agents/best_regression_model.joblib",
         new_data_path="agents/preddata.csv",
-        feature_names_path="agents/feature_names.json"  # Optional
+        feature_names_path="agents/feature_names_reg.json"  # Optional
     )
     
     if predictions is not None:
