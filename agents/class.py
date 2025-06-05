@@ -807,7 +807,7 @@ class ClassificationSpecialistAgent(CSVMLAgent):
                 self.target_encoder = target_encoder
                 
                 if state.get('best_model'):
-                    model_filename = f"best_classification_model.joblib"
+                    model_filename = f"agents/best_classification_model.joblib"
                     self.save_model(state['best_model'], model_filename)
                     logger.info(f"💾 Model saved as: {model_filename}")
                     
@@ -1098,6 +1098,7 @@ class ClassificationSpecialistAgent(CSVMLAgent):
             logger.error(f"Ensemble creation failed: {e}")
             return None
 
+    
     def save_model(self, model_info, filepath):
         """Save trained classification model with metadata"""
         try:
