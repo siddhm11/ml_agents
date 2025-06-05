@@ -427,7 +427,7 @@ class RegressionSpecialistAgent(CSVMLAgent):
             
             # Store feature names for later use
             feature_names = state['feature_columns']
-            with open("agents/feature_names.json", "w") as f:
+            with open("agents/feature_names_reg.json", "w") as f:
                 json.dump(feature_names, f)
             
             # Train each model with advanced optimization
