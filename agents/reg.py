@@ -6,6 +6,28 @@ from sklearn.feature_selection import SelectKBest, f_regression, mutual_info_reg
 from sklearn.preprocessing import StandardScaler
 import logging
 
+from sklearn.model_selection import RandomizedSearchCV, cross_val_score
+from sklearn.ensemble import ExtraTreesRegressor, AdaBoostRegressor, VotingRegressor
+from sklearn.linear_model import Ridge, Lasso, ElasticNet, HuberRegressor
+from sklearn.svm import SVR
+from sklearn.neural_network import MLPRegressor
+from sklearn.metrics import mean_absolute_error, median_absolute_error, mean_absolute_percentage_error
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+import warnings
+warnings.filterwarnings('ignore')
+
+import re
+import logging
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+from xgboost import XGBRegressor
+
+
+logger = logging.getLogger(__name__)
+
+
 logger = logging.getLogger(__name__)
 
 class RegressionSpecialistAgent(CSVMLAgent):
@@ -285,6 +307,379 @@ class RegressionSpecialistAgent(CSVMLAgent):
             state['error_messages'].append(f"Regression identification failed, used emergency fallback: {str(e)}")
         
         return state
+
+    def model_training_node(self, state: AgentState) -> AgentState:
+        """
+        Enhanced regression model training with comprehensive optimization
+        """
+        logger.info("🚀 Training advanced regression models with sophisticated optimization")
+        
+        if state['raw_data'] is None:
+            state['error_messages'].append("No data available for training")
+            return state
+
+        if not state['feature_columns'] or not state['target_column']:
+            state['error_messages'].append("Feature and target columns not set")
+            return state
+
+        try:
+            df = state['raw_data'].copy()
+            
+            # Prepare features and target
+            X = df[state['feature_columns']]
+            y = df[state['target_column']]
+            
+            logger.info(f"Training data shape: X={X.shape}, y={y.shape}")
+            
+            # Enhanced preprocessing for regression
+            X_processed, preprocessing_pipeline = self._advanced_regression_preprocessing(X, state['preprocessing_steps'])
+            
+            # Ensure target is numeric for regression
+            if not pd.api.types.is_numeric_dtype(y):
+                logger.warning("Target is not numeric, converting...")
+                y = pd.to_numeric(y, errors='coerce')
+                y = y.fillna(y.median())
+            
+            # Split data
+            from sklearn.model_selection import train_test_split
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_processed, y, test_size=0.2, random_state=42
+            )
+            
+            # Get enhanced model suite
+            models = self._get_enhanced_regression_models(state['recommended_algorithms'])
+            trained_models = {}
+            
+            # Store feature names for later use
+            feature_names = state['feature_columns']
+            with open("runnable/feature_names.json", "w") as f:
+                json.dump(feature_names, f)
+            
+            # Train each model with advanced optimization
+            for name, model in models.items():
+                try:
+                    logger.info(f"🔧 Training and optimizing {name}...")
+                    
+                    # Advanced hyperparameter optimization
+                    optimized_model = self._advanced_regression_optimization(
+                        model, X_train, y_train, name, state['data_info']['shape'][0]
+                    )
+                    
+                    # Comprehensive cross-validation
+                    cv_results = self._regression_cross_validation(optimized_model, X_train, y_train)
+                    
+                    # Train final model
+                    optimized_model.fit(X_train, y_train)
+                    y_pred = optimized_model.predict(X_test)
+                    
+                    # Comprehensive regression metrics
+                    metrics = self._calculate_comprehensive_regression_metrics(y_test, y_pred, cv_results)
+                    
+                    # Feature importance analysis
+                    feature_importance = self._calculate_feature_importance(optimized_model, feature_names)
+                    
+                    trained_models[name] = {
+                        'model': optimized_model,
+                        'metrics': metrics,
+                        'predictions': y_pred.tolist(),
+                        'feature_importance': feature_importance,
+                        'cv_results': cv_results
+                    }
+                    
+                    # Log performance immediately
+                    logger.info(f"✅ {name} Training Complete:")
+                    logger.info(f"   R² Score: {metrics['r2']:.4f}")
+                    logger.info(f"   RMSE: {metrics['rmse']:.4f}")
+                    logger.info(f"   MAE: {metrics['mae']:.4f}")
+                    logger.info(f"   CV R² Mean: {cv_results['r2_mean']:.4f} ± {cv_results['r2_std']:.4f}")
+                    logger.info("")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to train {name}: {e}")
+                    state['error_messages'].append(f"Failed to train {name}: {str(e)}")
+            
+            # Store all trained models
+            state['trained_models'] = trained_models
+            state['preprocessing_pipeline'] = preprocessing_pipeline
+            
+            # Advanced model selection for regression
+            if trained_models:
+                best_model_info = self._select_best_regression_model(trained_models)
+                state['best_model'] = best_model_info
+                
+                # Create ensemble if multiple good models exist
+                ensemble_model = self._create_regression_ensemble(trained_models, X_train, y_train, X_test, y_test)
+                if ensemble_model:
+                    state['trained_models']['Ensemble'] = ensemble_model
+                    
+                    # Check if ensemble is better than best individual model
+                    if (ensemble_model['metrics']['r2'] > state['best_model']['metrics']['r2']):
+                        state['best_model'] = {
+                            'name': 'Ensemble',
+                            'model': ensemble_model['model'],
+                            'metrics': ensemble_model['metrics']
+                        }
+                        logger.info("🏆 Ensemble model selected as best performer!")
+            
+            logger.info(f"🎯 Training completed: {len(trained_models)} models trained")
+            logger.info(f"🏆 Best model: {state['best_model']['name']} (R² = {state['best_model']['metrics']['r2']:.4f})")
+            
+        except Exception as e:
+            logger.error(f"Model training failed: {e}")
+            state['error_messages'].append(f"Model training failed: {str(e)}")
+        
+        return state
+
+
+    def _advanced_regression_preprocessing(self, X, preprocessing_steps):
+        """Advanced preprocessing pipeline for regression"""
+        from sklearn.preprocessing import LabelEncoder
+        
+        # Identify numeric and categorical columns
+        numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
+        
+        X_processed = X.copy()
+        
+        # Handle categorical encoding if needed
+        if categorical_features:
+            for col in categorical_features:
+                le = LabelEncoder()
+                X_processed[col] = le.fit_transform(X_processed[col].astype(str))
+        
+        # Apply preprocessing pipeline
+        preprocessor = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+        
+        X_processed = preprocessor.fit_transform(X_processed)
+        return X_processed, preprocessor
+
+    def _get_enhanced_regression_models(self, algorithm_names):
+        """Enhanced suite of regression models"""
+        from xgboost import XGBRegressor
+        
+        base_models = {
+            'LinearRegression': LinearRegression(n_jobs=-1),
+            'Ridge': Ridge(random_state=42),
+            'Lasso': Lasso(random_state=42, max_iter=2000),
+            'ElasticNet': ElasticNet(random_state=42, max_iter=2000),
+            'RandomForestRegressor': RandomForestRegressor(
+                n_estimators=200, max_depth=15, min_samples_split=5,
+                min_samples_leaf=2, max_features='sqrt', n_jobs=-1, random_state=42
+            ),
+            'GradientBoostingRegressor': GradientBoostingRegressor(
+                n_estimators=200, learning_rate=0.1, max_depth=6,
+                min_samples_split=5, subsample=0.8, random_state=42
+            ),
+            'XGBRegressor': XGBRegressor(
+                n_estimators=200, learning_rate=0.1, max_depth=6,
+                subsample=0.8, colsample_bytree=0.8, random_state=42, verbosity=0
+            ),
+            'ExtraTreesRegressor': ExtraTreesRegressor(
+                n_estimators=200, max_depth=15, min_samples_split=5,
+                min_samples_leaf=2, n_jobs=-1, random_state=42
+            ),
+            'SVR': SVR(kernel='rbf', C=1.0, gamma='scale'),
+            'KNeighborsRegressor': KNeighborsRegressor(
+                n_neighbors=5, weights='distance', algorithm='auto'
+            ),
+            'DecisionTreeRegressor': DecisionTreeRegressor(
+                max_depth=10, min_samples_split=10, min_samples_leaf=5, random_state=42
+            ),
+            'HuberRegressor': HuberRegressor(max_iter=1000),
+            'MLPRegressor': MLPRegressor(
+                hidden_layer_sizes=(100, 50), max_iter=1000, random_state=42,
+                early_stopping=True, validation_fraction=0.2
+            )
+        }
+        
+        # Return only requested algorithms or all if none specified
+        if algorithm_names:
+            return {name: model for name, model in base_models.items() if name in algorithm_names}
+        else:
+            return base_models
+
+    def _advanced_regression_optimization(self, model, X_train, y_train, model_name, dataset_size):
+        """Advanced hyperparameter optimization for regression models"""
+        
+        param_grids = {
+            'RandomForestRegressor': {
+                'n_estimators': [100, 200, 300],
+                'max_depth': [10, 15, 20, None],
+                'min_samples_split': [2, 5, 10],
+                'min_samples_leaf': [1, 2, 4],
+                'max_features': ['sqrt', 'log2', None]
+            },
+            'GradientBoostingRegressor': {
+                'n_estimators': [100, 200, 300],
+                'learning_rate': [0.01, 0.05, 0.1, 0.15],
+                'max_depth': [3, 5, 7, 9],
+                'subsample': [0.7, 0.8, 0.9, 1.0]
+            },
+            'XGBRegressor': {
+                'n_estimators': [100, 200, 300],
+                'learning_rate': [0.01, 0.05, 0.1, 0.15],
+                'max_depth': [3, 5, 7, 9],
+                'subsample': [0.7, 0.8, 0.9, 1.0],
+                'colsample_bytree': [0.7, 0.8, 0.9, 1.0]
+            },
+            'Ridge': {
+                'alpha': [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+            },
+            'Lasso': {
+                'alpha': [0.0001, 0.001, 0.01, 0.1, 1.0]
+            },
+            'SVR': {
+                'C': [0.1, 1, 10, 100],
+                'gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
+                'kernel': ['rbf', 'poly']
+            }
+        }
+        
+        param_grid = param_grids.get(model_name, {})
+        
+        if param_grid:
+            n_iter = 20 if dataset_size < 1000 else 50
+            search = RandomizedSearchCV(
+                model, param_grid, n_iter=n_iter, cv=5,
+                scoring='neg_mean_squared_error', n_jobs=-1, random_state=42
+            )
+            search.fit(X_train, y_train)
+            return search.best_estimator_
+        
+        return model
+
+    def _regression_cross_validation(self, model, X_train, y_train):
+        """Comprehensive cross-validation for regression"""
+        
+        cv_results = {}
+        
+        # R² scores
+        r2_scores = cross_val_score(model, X_train, y_train, cv=5, scoring='r2', n_jobs=-1)
+        cv_results['r2_mean'] = r2_scores.mean()
+        cv_results['r2_std'] = r2_scores.std()
+        cv_results['r2_scores'] = r2_scores.tolist()
+        
+        # MSE scores
+        mse_scores = cross_val_score(model, X_train, y_train, cv=5, scoring='neg_mean_squared_error', n_jobs=-1)
+        cv_results['mse_mean'] = abs(mse_scores.mean())
+        cv_results['mse_std'] = mse_scores.std()
+        
+        return cv_results
+
+    def _calculate_comprehensive_regression_metrics(self, y_true, y_pred, cv_results):
+        """Calculate comprehensive regression metrics"""
+        from sklearn.metrics import mean_squared_error, r2_score
+        
+        metrics = {
+            'mse': mean_squared_error(y_true, y_pred),
+            'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
+            'mae': mean_absolute_error(y_true, y_pred),
+            'r2': r2_score(y_true, y_pred),
+            'median_ae': median_absolute_error(y_true, y_pred),
+            'max_error': np.max(np.abs(y_true - y_pred)),
+            'cv_r2_mean': cv_results.get('r2_mean', 0),
+            'cv_r2_std': cv_results.get('r2_std', 0),
+            'cv_mse_mean': cv_results.get('mse_mean', 0)
+        }
+        
+        # Add MAPE if no zero values
+        try:
+            if not np.any(y_true == 0):
+                metrics['mape'] = mean_absolute_percentage_error(y_true, y_pred)
+        except:
+            pass
+        
+        return metrics
+
+    def _calculate_feature_importance(self, model, feature_names):
+        """Calculate feature importance for the model"""
+        try:
+            if hasattr(model, 'feature_importances_'):
+                importances = model.feature_importances_
+            elif hasattr(model, 'coef_'):
+                importances = np.abs(model.coef_)
+            else:
+                return {}
+            
+            feature_importance = dict(zip(feature_names, importances))
+            return dict(sorted(feature_importance.items(), key=lambda x: x[1], reverse=True))
+            
+        except Exception as e:
+            logger.warning(f"Could not calculate feature importance: {e}")
+            return {}
+
+    def _select_best_regression_model(self, trained_models):
+        """Advanced model selection for regression"""
+        
+        model_scores = {}
+        
+        for name, model_data in trained_models.items():
+            metrics = model_data['metrics']
+            
+            # Composite score considering multiple factors
+            r2_score = metrics.get('r2', 0)
+            cv_r2_mean = metrics.get('cv_r2_mean', 0)
+            cv_stability = 1 - metrics.get('cv_r2_std', 1) / max(abs(cv_r2_mean), 0.01)
+            
+            # Weighted composite score
+            composite_score = (0.4 * r2_score + 0.4 * cv_r2_mean + 0.2 * cv_stability)
+            model_scores[name] = composite_score
+        
+        # Select best model
+        best_model_name = max(model_scores.keys(), key=lambda x: model_scores[x])
+        
+        return {
+            'name': best_model_name,
+            'model': trained_models[best_model_name]['model'],
+            'metrics': trained_models[best_model_name]['metrics']
+        }
+
+    def _create_regression_ensemble(self, trained_models, X_train, y_train, X_test, y_test):
+        """Create an ensemble of the best performing models"""
+        
+        try:
+            # Select top models based on R² score
+            model_r2 = {name: data['metrics']['r2'] for name, data in trained_models.items()}
+            top_models = {name: r2 for name, r2 in model_r2.items() if r2 > 0.3}
+            
+            if len(top_models) < 2:
+                return None
+            
+            # Create ensemble
+            sorted_models = sorted(top_models.items(), key=lambda x: x[1], reverse=True)[:5]
+            estimators = [(name, trained_models[name]['model']) for name, _ in sorted_models]
+            
+            ensemble = VotingRegressor(estimators=estimators)
+            ensemble.fit(X_train, y_train)
+            
+            # Evaluate ensemble
+            y_pred_ensemble = ensemble.predict(X_test)
+            
+            ensemble_metrics = {
+                'mse': mean_squared_error(y_test, y_pred_ensemble),
+                'rmse': np.sqrt(mean_squared_error(y_test, y_pred_ensemble)),
+                'mae': mean_absolute_error(y_test, y_pred_ensemble),
+                'r2': r2_score(y_test, y_pred_ensemble)
+            }
+            
+            logger.info(f"🤝 Ensemble created with {len(estimators)} models: R² = {ensemble_metrics['r2']:.4f}")
+            
+            return {
+                'model': ensemble,
+                'metrics': ensemble_metrics,
+                'predictions': y_pred_ensemble.tolist(),
+                'component_models': [name for name, _ in estimators]
+            }
+            
+        except Exception as e:
+            logger.error(f"Ensemble creation failed: {e}")
+            return None
+
+
+
 
     async def algorithm_recommendation_node(self, state: AgentState) -> AgentState:
         """

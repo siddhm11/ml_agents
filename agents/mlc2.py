@@ -1026,7 +1026,7 @@ class CSVMLAgent:
                 # Train models
                 models = self._get_model_instances(state['recommended_algorithms'])
                 trained_models = {}
-                with open("runnable/feature_names.json", "w") as f:
+                with open("agents/feature_names.json", "w") as f:
                     json.dump(state['feature_columns'], f)
                 
                 # Then in your training loop:
@@ -1466,7 +1466,7 @@ async def main():
     agent = CSVMLAgent(groq_api_key="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")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "runnable/Mumbai House Prices with Lakhs.csv"
+    csv_file_path = "agents/Mumbai House Prices with Lakhs.csv"
     
     try:
         # Analyze CSV and build ML model
@@ -1522,8 +1522,8 @@ async def main():
         # Save the best model
         if results['best_model']:
             
-            agent.save_model(results['best_model'], "runnable/z.joblib")
-            print(f"💾 Best model saved to: runnable/z.joblib")
+            agent.save_model(results['best_model'], "agents/z.joblib")
+            print(f"💾 Best model saved to: agents/z.joblib")
         
         if results.get('errors'):
             print(f"\n⚠️  Warnings/Errors:")
