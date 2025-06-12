@@ -9,6 +9,7 @@ venv/
 # Add these lines
 *.joblib
 *.pkl
+__pycache__/
 *.h5
 *.csv
 *.json
