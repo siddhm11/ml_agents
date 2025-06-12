@@ -424,6 +424,7 @@ class ClassificationSpecialistAgent(CSVMLAgent):
             classification_algorithms = {
                 'RandomForestClassifier','XGBClassifier',
                 'LogisticRegression', 'KNeighborsClassifier', 'DecisionTreeClassifier',
+                'LogisticRegression', 'KNeighborsClassifier', 'DecisionTreeClassifier',
                 'ExtraTreesClassifier', 'AdaBoostClassifier', 'GaussianNB', 'MultinomialNB',
                 'MLPClassifier'
             }
@@ -482,7 +483,7 @@ class ClassificationSpecialistAgent(CSVMLAgent):
                     algorithms = ['LogisticRegression', 'KNeighborsClassifier', 'GaussianNB']
                 elif feature_count > dataset_size * 0.1:
                     # High-dimensional: regularized models
-                    algorithms = ['LogisticRegression', 'SVC', 'RandomForestClassifier']
+                    algorithms = ['LogisticRegression', 'RandomForestClassifier']
                 else:
                     # Standard case: ensemble methods
                     algorithms = ['RandomForestClassifier', 'LogisticRegression']
@@ -903,6 +904,7 @@ class ClassificationSpecialistAgent(CSVMLAgent):
                 'C': [0.01, 0.1, 1.0, 10.0, 100.0],
                 'penalty': ['l1', 'l2'],
                 'solver': ['liblinear', 'saga']
+
             }
         }
         

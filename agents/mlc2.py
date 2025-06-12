@@ -1462,11 +1462,10 @@ class CSVMLAgent:
 async def main():
     """Example usage of the CSV ML Agent"""
     
-    # Initialize agent (replace with your Groq API key)
-    agent = CSVMLAgent(groq_api_key="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")
+    agent = CSVMLAgent(groq_api_key="API")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "transactions_sampled_30000.csv"
+    csv_file_path = "agents/Fashion_Retail_Sales-2.csv"
     
     try:
         # Analyze CSV and build ML model

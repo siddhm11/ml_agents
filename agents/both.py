@@ -38,11 +38,13 @@ class DualAgentAnalyzer:
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
             'classification_results': None,
             'regression_results': None,
+
+            'base_agent_results': None,
             'comparison': {},
             'recommendation': '',
             'errors': []
         }
-
+        
         # Run Classification Agent
         print("\n🎯 STEP 1: Classification Specialist Analysis")
         print("-" * 50)
@@ -72,6 +74,7 @@ class DualAgentAnalyzer:
         
         # Run Regression Agent
         print("\n📈 STEP 2: Regression Specialist Analysis")
+
         print("-" * 50)
         
         try:
@@ -313,6 +316,7 @@ class DualAgentAnalyzer:
                 print(f"     • {model_name}: R²={r2:.4f}, RMSE={rmse:.4f}")
     
     def save_comparison_report(self, results: Dict[str, Any], output_path: str = "agents/dual_agent_reports.json"):
+
         """Save detailed comparison report"""
         try:
             with open(output_path, 'w') as f:
@@ -326,7 +330,9 @@ async def main():
     """Run dual agent analysis"""
     
     # Configuration
+
     GROQ_API_KEY = "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"  # Replace with your actual API key
+
     CSV_FILE_PATH = "agents/Mumbai House Prices with Lakhs.csv"  # Replace with your CSV file
     
     # Initialize analyzer
