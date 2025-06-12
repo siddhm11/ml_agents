@@ -6,6 +6,7 @@ __pycache__/
 venv/
 
 # ML/Data files
+# Add these lines
 *.joblib
 *.pkl
 *.h5
@@ -32,4 +33,4 @@ agents/__pycache__/
 
 # Experimental/Test files
 *_try.py
-*_test.py
+*_test.py*.joblib
