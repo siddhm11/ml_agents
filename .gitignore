@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+venv/
+
+# ML/Data files
+*.joblib
+*.pkl
+*.h5
+*.csv
+*.json
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Project-specific
+runnable/
+agents/__pycache__/
+
+# Logs and outputs
+*.log
+*.sqlite
+
+# Environment files
+.env
+.env.local
+.env.development
+
+# Experimental/Test files
+*_try.py
+*_test.py

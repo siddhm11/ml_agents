@@ -1466,7 +1466,7 @@ async def main():
     agent = CSVMLAgent(groq_api_key="API")
     
     # Example CSV file path - replace with your actual CSV file
-    csv_file_path = "agents/Mumbai House Prices with Lakhs.csv"
+    csv_file_path = "agents/Fashion_Retail_Sales-2.csv"
     
     try:
         # Analyze CSV and build ML model

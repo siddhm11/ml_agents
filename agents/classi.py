@@ -19,7 +19,6 @@ from sklearn.ensemble import (
     RandomForestClassifier, GradientBoostingClassifier, 
     ExtraTreesClassifier, AdaBoostClassifier, VotingClassifier
 )
-from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
@@ -424,7 +423,7 @@ class ClassificationSpecialistAgent(CSVMLAgent):
             # Define classification algorithm mapping
             classification_algorithms = {
                 'RandomForestClassifier','XGBClassifier',
-                'LogisticRegression', 'SVC', 'KNeighborsClassifier', 'DecisionTreeClassifier',
+                'LogisticRegression', 'KNeighborsClassifier', 'DecisionTreeClassifier',
                 'ExtraTreesClassifier', 'AdaBoostClassifier', 'GaussianNB', 'MultinomialNB',
                 'MLPClassifier'
             }
@@ -434,8 +433,6 @@ class ClassificationSpecialistAgent(CSVMLAgent):
                 'xgboost': 'XGBClassifier',
                 'xgb': 'XGBClassifier',
                 'logistic regression': 'LogisticRegression',
-                'svm': 'SVC',
-                'support vector': 'SVC',
                 'knn': 'KNeighborsClassifier',
                 'k-neighbors': 'KNeighborsClassifier',
                 'decision tree': 'DecisionTreeClassifier',
@@ -861,7 +858,6 @@ class ClassificationSpecialistAgent(CSVMLAgent):
                 n_estimators=200, learning_rate=0.1, max_depth=6,
                 subsample=0.8, colsample_bytree=0.8, random_state=42, verbosity=0
             ),
-            'SVC': SVC(kernel='rbf', C=1.0, gamma='scale', probability=True, random_state=42),
             'KNeighborsClassifier': KNeighborsClassifier(
                 n_neighbors=5, weights='distance', algorithm='auto'
             ),
@@ -907,11 +903,6 @@ class ClassificationSpecialistAgent(CSVMLAgent):
                 'C': [0.01, 0.1, 1.0, 10.0, 100.0],
                 'penalty': ['l1', 'l2'],
                 'solver': ['liblinear', 'saga']
-            },
-            'SVC': {
-                'C': [0.1, 1, 10, 100],
-                'gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
-                'kernel': ['rbf', 'poly', 'sigmoid']
             }
         }
         

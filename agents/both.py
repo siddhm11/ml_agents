@@ -24,7 +24,6 @@ class DualAgentAnalyzer:
         self.groq_api_key = groq_api_key
         self.classification_agent = ClassificationSpecialistAgent(groq_api_key=groq_api_key)
         self.regression_agent = RegressionSpecialistAgent(groq_api_key=groq_api_key)
-        self.base_agent = CSVMLAgent(groq_api_key=groq_api_key)
         
     async def analyze_with_both_agents(self, csv_path: str) -> Dict[str, Any]:
         """Run both agents on the same dataset and compare results"""
@@ -39,33 +38,13 @@ class DualAgentAnalyzer:
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
             'classification_results': None,
             'regression_results': None,
-            'base_agent_results': None,
             'comparison': {},
             'recommendation': '',
             'errors': []
         }
-        
-        # First, let the base agent do initial analysis
-        print("\n🔍 STEP 1: Base Agent Initial Analysis")
-        print("-" * 50)
-        
-        try:
-            base_results = await self.base_agent.analyze_csv(csv_path)
-            results['base_agent_results'] = base_results
-            
-            print(f"✅ Base Agent Analysis Complete")
-            print(f"   📊 Data Shape: {base_results.get('data_shape', 'Unknown')}")
-            print(f"   🎯 Detected Problem Type: {base_results.get('problem_type', 'Unknown')}")
-            print(f"   🎲 Target Column: {base_results.get('target_column', 'Unknown')}")
-            print(f"   🔧 Features: {len(base_results.get('feature_columns', []))} columns")
-            
-        except Exception as e:
-            error_msg = f"Base agent analysis failed: {str(e)}"
-            results['errors'].append(error_msg)
-            logger.error(error_msg)
-        
+
         # Run Classification Agent
-        print("\n🎯 STEP 2: Classification Specialist Analysis")
+        print("\n🎯 STEP 1: Classification Specialist Analysis")
         print("-" * 50)
         
         try:
@@ -92,7 +71,7 @@ class DualAgentAnalyzer:
             logger.error(error_msg)
         
         # Run Regression Agent
-        print("\n📈 STEP 3: Regression Specialist Analysis")
+        print("\n📈 STEP 2: Regression Specialist Analysis")
         print("-" * 50)
         
         try:
@@ -333,7 +312,7 @@ class DualAgentAnalyzer:
                 rmse = metrics.get('rmse', 0)
                 print(f"     • {model_name}: R²={r2:.4f}, RMSE={rmse:.4f}")
     
-    def save_comparison_report(self, results: Dict[str, Any], output_path: str = "dual_agent_report.json"):
+    def save_comparison_report(self, results: Dict[str, Any], output_path: str = "agents/dual_agent_reports.json"):
         """Save detailed comparison report"""
         try:
             with open(output_path, 'w') as f:
@@ -347,7 +326,7 @@ async def main():
     """Run dual agent analysis"""
     
     # Configuration
-    GROQ_API_KEY = "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"  # Replace with your actual API key
+    GROQ_API_KEY = "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"  # Replace with your actual API key
     CSV_FILE_PATH = "agents/Mumbai House Prices with Lakhs.csv"  # Replace with your CSV file
     
     # Initialize analyzer
