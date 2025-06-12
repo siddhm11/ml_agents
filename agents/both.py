@@ -331,7 +331,7 @@ async def main():
     
     # Configuration
 
-    GROQ_API_KEY = "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"  # Replace with your actual API key
+    GROQ_API_KEY = "API"  # Replace with your actual API key
 
     CSV_FILE_PATH = "agents/Mumbai House Prices with Lakhs.csv"  # Replace with your CSV file
     
