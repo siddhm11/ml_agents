@@ -13,3 +13,4 @@ statsmodels
 prophet
 sktime  
 scipy   
+pmdarima

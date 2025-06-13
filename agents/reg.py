@@ -383,6 +383,23 @@ class RegressionSpecialistAgent(CSVMLAgent):
             state['error_messages'] = []
         
         return state
+
+
+
+    def _detect_time_series_potential(self, df, state):
+        """Detect if dataset is suitable for time series analysis"""
+        
+        # Look for date/time columns
+        datetime_cols = []
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]) or 'date' in col.lower() or 'time' in col.lower():
+                datetime_cols.append(col)
+        
+        # Check for sequential patterns
+        has_temporal_index = isinstance(df.index, pd.DatetimeIndex)
+        
+        return len(datetime_cols) > 0 or has_temporal_index
+
     def model_training_node(self, state: AgentState) -> AgentState:
         """
         Enhanced regression model training with comprehensive optimization
@@ -467,6 +484,7 @@ class RegressionSpecialistAgent(CSVMLAgent):
                     logger.info(f"   RMSE: {metrics['rmse']:.4f}")
                     logger.info(f"   MAE: {metrics['mae']:.4f}")
                     logger.info(f"   CV R² Mean: {cv_results['r2_mean']:.4f} ± {cv_results['r2_std']:.4f}")
+                    logger.info(f"  MAPE Mean: {metrics['mape']:.4f} ")
                     logger.info("")
                     
                 except Exception as e:
@@ -737,6 +755,8 @@ class RegressionSpecialistAgent(CSVMLAgent):
         try:
             if not np.any(y_true == 0):
                 metrics['mape'] = mean_absolute_percentage_error(y_true, y_pred)
+                logger.info(f"✅ Added Mean Absolute Percentage Error (MAPE)")
+                logger.info(f"   📈 MAPE: {metrics['mape']:.4f}")
         except:
             pass
         
@@ -810,7 +830,8 @@ class RegressionSpecialistAgent(CSVMLAgent):
                 'mse': mean_squared_error(y_test, y_pred_ensemble),
                 'rmse': np.sqrt(mean_squared_error(y_test, y_pred_ensemble)),
                 'mae': mean_absolute_error(y_test, y_pred_ensemble),
-                'r2': r2_score(y_test, y_pred_ensemble)
+                'r2': r2_score(y_test, y_pred_ensemble),
+                'mape': mean_absolute_percentage_error(y_test, y_pred_ensemble)
             }
             
             logger.info(f"🤝 Ensemble created with {len(estimators)} models: R² = {ensemble_metrics['r2']:.4f}")
@@ -1220,16 +1241,17 @@ async def main():
     """Example usage of the RegressionSpecialistAgent"""
     
     # Initialize the regression specialist
-    agent = RegressionSpecialistAgent(groq_api_key="API")
+    agent = RegressionSpecialistAgent(groq_api_key="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")
     
     # Analyze a CSV file
-    results = await agent.analyze_csv("transactions_sampled_30000.csv")
+    results = await agent.analyze_csv("agents/housing.csv")
     
     print(f"🎯 Problem Type: {results['problem_type']}")
     print(f"📊 Target: {results['target_column']}")
     print(f"🔧 Features: {len(results['feature_columns'])}")
     print(f"🏆 Best Model: {results['best_model']['name']}")
     print(f"📈 R² Score: {results['best_model']['metrics'].get('r2', 'N/A')}")
+    print(f"📉 MAPE: {results['best_model']['metrics'].get('mape', 'N/A')}")
 
 # Run the example
 if __name__ == "__main__":
