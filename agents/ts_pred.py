@@ -612,7 +612,7 @@ async def main():
     """Example usage with time series data"""
     
     # Initialize the time series regression agent
-    agent = TimeSeriesRegressionAgent(groq_api_key="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")
+    agent = TimeSeriesRegressionAgent(groq_api_key="API")
     
     # Analyze a time series CSV
     results = await agent.analyze_csv("transactions_sampled_30000.csv")
