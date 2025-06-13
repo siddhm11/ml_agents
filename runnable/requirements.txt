@@ -1,0 +1,14 @@
+langgraph 
+langchain-groq 
+pandas
+numpy
+scikit-learn
+xgboost
+catboost
+matplotlib
+seaborn
+langgraph
+groq
+chardet
+python-dotenv
+typing-extensions
