@@ -9,3 +9,7 @@ groq
 langgraph
 chardet
 typing_extensions
+statsmodels 
+prophet
+sktime  
+scipy   
