@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../../Downloads/complete_finetuned_model"
+		}
+	],
+	"settings": {}
+}

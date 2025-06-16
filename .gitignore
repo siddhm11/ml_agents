@@ -1,37 +1,41 @@
 # Python
 __pycache__/
 *.py[cod]
-*.so
-.Python
-venv/
+*.pyo
+*.pyd
+.python-version
 
-# ML/Data files
-# Add these lines
+# Virtual Environments
+venv/
+.env/
+ENV/
+
+# Model Files
 *.joblib
 *.pkl
-__pycache__/
 *.h5
+*.keras
+
+# Data Files
 *.csv
-*.json
+*.data
+*.features
+
+# Logs
+*.log
+logs/
 
 # IDE
-.vscode/
 .idea/
-*.iml
+.vscode/
+*.swp
+*.swo
 
-# Project-specific
-runnable/
-agents/__pycache__/
-
-# Logs and outputs
-*.log
-*.sqlite
-
-# Environment files
+# Local Config
 .env
+*.env*
 .env.local
-.env.development
 
-# Experimental/Test files
-*_try.py
-*_test.py*.joblib
+# Experimental/Test Files
+_test/
+_experiments/

@@ -1,631 +1,1079 @@
-# Additional imports for time series
+# timeseries.py
+
+# Core libraries
 import pandas as pd
 import numpy as np
+import json
+import re
+import logging
+import warnings
+import joblib
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+warnings.filterwarnings('ignore')
+
+# Base agent import
+from mlc2 import CSVMLAgent, AgentState
+
+# Time Series Libraries
+import statsmodels.api as sm
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.exponential_smoothing.ets import ETSModel
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.tsa.stattools import adfuller, kpss
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-import warnings
-warnings.filterwarnings('ignore')
-from reg import RegressionSpecialistAgent
-from groqflow import AgentState
-import json
-import logging
-# For Prophet (if available)
+
+# Prophet for time series forecasting
 try:
     from prophet import Prophet
     PROPHET_AVAILABLE = True
 except ImportError:
     PROPHET_AVAILABLE = False
-    print("Prophet not available. Install with: pip install prophet")
+    
+# Machine Learning for Time Series
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
 
-# For advanced time series models
+# Deep Learning for Time Series (optional)
 try:
-    from sktime.forecasting.arima import AutoARIMA
-    from sktime.forecasting.exp_smoothing import ExponentialSmoothing
-    from sktime.forecasting.theta import ThetaForecaster
-    SKTIME_AVAILABLE = True
+    import tensorflow as tf
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import LSTM, Dense, Dropout
+    from tensorflow.keras.optimizers import Adam
+    TENSORFLOW_AVAILABLE = True
 except ImportError:
-    SKTIME_AVAILABLE = False
-    print("Sktime not available. Install with: pip install sktime")
+    TENSORFLOW_AVAILABLE = False
 
-class TimeSeriesRegressionAgent(RegressionSpecialistAgent):
-    """Extended regression agent with time series capabilities"""
+# Logging
+logger = logging.getLogger(__name__)
+
+class TimeSeriesAgent(CSVMLAgent):
+    """Specialized time series forecasting agent that inherits from CSVMLAgent"""
     
-    def __init__(self, groq_api_key, **kwargs):
-        super().__init__(groq_api_key, **kwargs)
-        self.time_series_models = {}
-        self.is_time_series = False
+    def __init__(self, groq_api_key=None):
+        super().__init__(groq_api_key)
+        self.frequency = None
+        self.seasonality_period = None
         self.time_column = None
-        self.forecast_horizon = 30  # Default forecast periods
-    
+        self.forecast_horizon = 12  # Default forecast horizon
+        
     async def problem_identification_node(self, state: AgentState) -> AgentState:
-        """Enhanced problem identification to detect time series patterns"""
-        logger.info("🕐 Analyzing for time series patterns...")
+        """
+        Time series specialized problem identification with temporal pattern detection
+        """
+        logger.info("🕐 Performing time series problem identification with LLM")
         
-        # First run the parent regression identification
-        state = await super().problem_identification_node(state)
+        if not state['data_info']:
+            return state
+            
+        # Force problem type to time series
+        state['problem_type'] = 'time_series'
         
-        # Then check for time series characteristics
         df = state['raw_data']
-        time_series_analysis = self._detect_time_series_patterns(df)
+        columns = state['data_info']['columns']
         
-        if time_series_analysis['is_time_series']:
-            logger.info("✅ Time series patterns detected!")
-            self.is_time_series = True
-            self.time_column = time_series_analysis['time_column']
-            state['problem_type'] = 'time_series_regression'
-            state['time_series_info'] = time_series_analysis
-            
-            # Update the LLM analysis for time series context
-            await self._enhance_time_series_analysis(state)
+        # Detect temporal columns
+        temporal_analysis = self._analyze_temporal_structure(df)
         
-        return state
-    
-    def _detect_time_series_patterns(self, df):
-        """Detect if the dataset has time series characteristics"""
-        analysis = {
-            'is_time_series': False,
-            'time_column': None,
-            'temporal_patterns': {},
-            'seasonality': None,
-            'trend': None,
-            'stationarity': None
-        }
-        
-        # Look for datetime columns
-        datetime_cols = []
-        for col in df.columns:
-            if df[col].dtype == 'datetime64[ns]':
-                datetime_cols.append(col)
-            elif df[col].dtype == 'object':
-                # Try to parse as datetime
-                try:
-                    pd.to_datetime(df[col].head(100), errors='raise')
-                    datetime_cols.append(col)
-                except:
-                    continue
-        
-        # Look for date-like column names
-        date_keywords = ['date', 'time', 'timestamp', 'day', 'month', 'year', 'created', 'updated']
-        for col in df.columns:
-            if any(keyword in col.lower() for keyword in date_keywords):
-                try:
-                    pd.to_datetime(df[col].head(100), errors='raise')
-                    if col not in datetime_cols:
-                        datetime_cols.append(col)
-                except:
-                    continue
-        
-        if not datetime_cols:
-            return analysis
-        
-        # Analyze the most promising datetime column
-        best_time_col = None
-        best_score = 0
-        
-        for col in datetime_cols:
-            try:
-                # Convert to datetime
-                dt_series = pd.to_datetime(df[col], errors='coerce')
-                valid_dates = dt_series.dropna()
-                
-                if len(valid_dates) < len(df) * 0.8:  # Too many invalid dates
-                    continue
-                
-                # Score based on regularity and coverage
-                time_diffs = valid_dates.diff().dropna()
-                if len(time_diffs) == 0:
-                    continue
-                
-                # Check for regular intervals
-                mode_diff = time_diffs.mode()
-                if len(mode_diff) > 0:
-                    regularity_score = (time_diffs == mode_diff[0]).mean()
-                    coverage_score = len(valid_dates) / len(df)
-                    total_score = regularity_score * coverage_score
-                    
-                    if total_score > best_score:
-                        best_score = total_score
-                        best_time_col = col
-            except:
-                continue
-        
-        if best_time_col and best_score > 0.7:  # Good time series candidate
-            analysis['is_time_series'] = True
-            analysis['time_column'] = best_time_col
-            analysis['regularity_score'] = best_score
-            
-            # Analyze temporal patterns
-            try:
-                dt_series = pd.to_datetime(df[best_time_col], errors='coerce')
-                df_temp = df.copy()
-                df_temp['_time'] = dt_series
-                df_temp = df_temp.dropna(subset=['_time']).sort_values('_time')
-                
-                # Basic temporal analysis
-                analysis['temporal_patterns'] = {
-                    'start_date': str(dt_series.min()),
-                    'end_date': str(dt_series.max()),
-                    'frequency': str(time_diffs.mode()[0]) if len(time_diffs.mode()) > 0 else 'unknown',
-                    'total_periods': len(df_temp),
-                    'date_range_days': (dt_series.max() - dt_series.min()).days
-                }
-                
-            except Exception as e:
-                logger.warning(f"Error in temporal pattern analysis: {e}")
-        
-        return analysis
-    
-    async def _enhance_time_series_analysis(self, state):
-        """LLM-enhanced analysis for time series context"""
-        time_info = state['time_series_info']
-        
+        # Create time series specific analysis prompt
         prompt = f"""
-        You are a time series forecasting expert. This dataset has been identified as time series data.
+        You are a time series forecasting expert. Analyze this dataset for time series forecasting setup.
         
-        TIME SERIES CHARACTERISTICS:
-        - Time Column: {time_info['time_column']}
-        - Target: {state['target_column']}
-        - Temporal Patterns: {time_info['temporal_patterns']}
-        - Dataset Shape: {state['data_info']['shape']}
+        DATASET OVERVIEW:
+        - Shape: {state['data_info']['shape']}
+        - Columns: {columns}
+        - Sample Data: {df.head(5).to_dict()}
         
-        ANALYSIS TASKS:
-        1. Determine if this is suitable for time series forecasting
-        2. Identify potential seasonality patterns (daily, weekly, monthly, yearly)
-        3. Recommend appropriate time series models
-        4. Suggest feature engineering for temporal patterns
+        TEMPORAL ANALYSIS:
+        - Potential time columns: {temporal_analysis['time_candidates']}
+        - Numeric columns (potential targets): {temporal_analysis['numeric_columns']}
+        - Date patterns detected: {temporal_analysis['date_patterns']}
         
-        RESPOND WITH JSON:
+        TIME SERIES IDENTIFICATION TASKS:
+        1. Identify the TIME/DATE column (index for temporal ordering)
+        2. Identify the TARGET variable to forecast
+        3. Determine the time series frequency (daily, weekly, monthly, etc.)
+        4. Detect seasonality patterns
+        5. Identify relevant feature columns for multivariate forecasting
+        
+        TIME SERIES CRITERIA:
+        - Time column: Contains dates, timestamps, or sequential time periods
+        - Target: Numeric variable that changes over time (sales, prices, demand, etc.)
+        - Features: Variables that might influence the target over time
+        
+        RESPOND WITH ONLY VALID JSON:
         {{
-            "is_forecasting_suitable": true/false,
-            "seasonality_patterns": ["weekly", "monthly"],
-            "recommended_ts_models": ["ARIMA", "Prophet", "SARIMA"],
-            "feature_engineering": ["day_of_week", "month", "quarter"],
-            "forecast_horizon_suggestion": 30,
-            "special_considerations": ["trend", "seasonality", "outliers"]
+            "time_column": "date_column_name",
+            "target_column": "target_variable_name", 
+            "feature_columns": ["feature1", "feature2"],
+            "frequency": "D/W/M/Q/Y",
+            "seasonality_detected": true/false,
+            "seasonality_period": 12,
+            "forecast_horizon": 12,
+            "time_series_type": "univariate/multivariate",
+            "reasoning": "explanation of selections",
+            "preprocessing_needs": ["stationarity_check", "seasonal_decomposition"],
+            "suggested_models": ["ARIMA", "Prophet", "LSTM"]
         }}
         """
         
         try:
             response = await self.llm_client.get_llm_response(prompt, temperature=0.1)
-            # Parse and store the enhanced analysis
-            import re
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group(0))
-                state['time_series_info']['llm_analysis'] = parsed
+            logger.info(f"🕐 LLM response for time series identification: {response}")
+            
+            # Parse LLM response
+            try:
+                cleaned_response = self._clean_json_response(response)
+                parsed_response = json.loads(cleaned_response)
                 
-                # Update forecast horizon if suggested
-                if 'forecast_horizon_suggestion' in parsed:
-                    self.forecast_horizon = parsed['forecast_horizon_suggestion']
+                # Validate and set time series parameters
+                if self._validate_time_series_setup(parsed_response, df, columns):
+                    state['target_column'] = parsed_response['target_column']
+                    state['feature_columns'] = parsed_response.get('feature_columns', [])
+                    
+                    # Store time series specific metadata
+                    state['data_info']['time_series_analysis'] = {
+                        'time_column': parsed_response['time_column'],
+                        'frequency': parsed_response.get('frequency', 'D'),
+                        'seasonality_period': parsed_response.get('seasonality_period', 12),
+                        'forecast_horizon': parsed_response.get('forecast_horizon', 12),
+                        'time_series_type': parsed_response.get('time_series_type', 'univariate'),
+                        'reasoning': parsed_response.get('reasoning', ''),
+                        'preprocessing_needs': parsed_response.get('preprocessing_needs', []),
+                        'suggested_models': parsed_response.get('suggested_models', [])
+                    }
+                    
+                    # Set instance variables
+                    self.time_column = parsed_response['time_column']
+                    self.frequency = parsed_response.get('frequency', 'D')
+                    self.seasonality_period = parsed_response.get('seasonality_period', 12)
+                    self.forecast_horizon = parsed_response.get('forecast_horizon', 12)
+                    
+                    logger.info(f"✅ Time series setup complete - Time: {self.time_column}, Target: {state['target_column']}")
+                    return state
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM JSON response: {e}")
                 
         except Exception as e:
-            logger.error(f"LLM time series analysis failed: {e}")
-    
-    def model_training_node(self, state: AgentState) -> AgentState:
-        """Enhanced model training including time series models"""
-        logger.info("🚀 Training models with time series capabilities...")
-        
-        # First run standard regression training
-        state = super().model_training_node(state)
-        
-        # Then add time series models if applicable
-        if self.is_time_series and self.time_column:
-            logger.info("📈 Training time series models...")
-            ts_models = self._train_time_series_models(state)
+            logger.error(f"Time series identification failed: {e}")
             
-            # Merge time series models with existing trained models
-            if ts_models:
-                state['trained_models'].update(ts_models)
-                
-                # Re-evaluate best model including time series models
-                all_models = state['trained_models']
-                best_model = self._select_best_model_with_ts(all_models)
-                if best_model:
-                    state['best_model'] = best_model
+        # Intelligent fallback for time series
+        logger.warning("Using intelligent time series fallback logic")
+        self._apply_time_series_fallback(state, df, temporal_analysis)
         
         return state
     
-    def _train_time_series_models(self, state):
-        """Train time series specific models"""
-        ts_models = {}
+    def _analyze_temporal_structure(self, df):
+        """Analyze dataset for temporal structure"""
+        analysis = {
+            'time_candidates': [],
+            'numeric_columns': [],
+            'date_patterns': []
+        }
         
-        try:
-            df = state['raw_data'].copy()
+        # Find potential time columns
+        for col in df.columns:
+            col_lower = col.lower()
             
-            # Prepare time series data
-            df[self.time_column] = pd.to_datetime(df[self.time_column], errors='coerce')
-            df = df.dropna(subset=[self.time_column, state['target_column']])
-            df = df.sort_values(self.time_column)
+            # Check column names for time indicators
+            time_keywords = ['date', 'time', 'timestamp', 'day', 'month', 'year', 'period']
+            if any(keyword in col_lower for keyword in time_keywords):
+                analysis['time_candidates'].append(col)
+                
+            # Check data types
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                analysis['time_candidates'].append(col)
+                
+            # Check for numeric columns (potential targets)
+            if pd.api.types.is_numeric_dtype(df[col]):
+                analysis['numeric_columns'].append(col)
+                
+        # Detect date patterns in string columns
+        for col in df.select_dtypes(include=['object']).columns:
+            sample_values = df[col].dropna().head(10).astype(str)
+            date_like_count = 0
             
-            # Create time series
-            ts_data = df.set_index(self.time_column)[state['target_column']].asfreq('D')  # Assume daily frequency
-            ts_data = ts_data.fillna(method='ffill')  # Forward fill missing values
-            
-            # Split data for time series (temporal split)
-            split_point = int(len(ts_data) * 0.8)
-            train_ts = ts_data[:split_point]
-            test_ts = ts_data[split_point:]
-            
-            logger.info(f"📊 Time series split: Train={len(train_ts)}, Test={len(test_ts)}")
-            
-            # 1. ARIMA Model
-            try:
-                logger.info("🔧 Training ARIMA model...")
-                arima_model = self._train_arima(train_ts, test_ts)
-                if arima_model:
-                    ts_models['ARIMA'] = arima_model
-            except Exception as e:
-                logger.error(f"ARIMA training failed: {e}")
-            
-            # 2. Prophet Model
-            if PROPHET_AVAILABLE:
-                try:
-                    logger.info("🔧 Training Prophet model...")
-                    prophet_model = self._train_prophet(df, state['target_column'], test_ts)
-                    if prophet_model:
-                        ts_models['Prophet'] = prophet_model
-                except Exception as e:
-                    logger.error(f"Prophet training failed: {e}")
-            
-            # 3. SARIMA Model (if seasonality detected)
-            try:
-                logger.info("🔧 Training SARIMA model...")
-                sarima_model = self._train_sarima(train_ts, test_ts)
-                if sarima_model:
-                    ts_models['SARIMA'] = sarima_model
-            except Exception as e:
-                logger.error(f"SARIMA training failed: {e}")
-            
-            # 4. Exponential Smoothing
-            if SKTIME_AVAILABLE:
-                try:
-                    logger.info("🔧 Training Exponential Smoothing...")
-                    exp_smooth_model = self._train_exponential_smoothing(train_ts, test_ts)
-                    if exp_smooth_model:
-                        ts_models['ExponentialSmoothing'] = exp_smooth_model
-                except Exception as e:
-                    logger.error(f"Exponential Smoothing training failed: {e}")
-            
-        except Exception as e:
-            logger.error(f"Time series model training failed: {e}")
-        
-        return ts_models
+            for value in sample_values:
+                # Simple date pattern detection
+                if (len(value) >= 8 and 
+                    any(sep in value for sep in ['-', '/', '.']) and
+                    any(char.isdigit() for char in value)):
+                    date_like_count += 1
+                    
+            if date_like_count >= len(sample_values) * 0.7:
+                analysis['date_patterns'].append(col)
+                if col not in analysis['time_candidates']:
+                    analysis['time_candidates'].append(col)
+                    
+        return analysis
     
-    def _train_arima(self, train_ts, test_ts):
-        """Train ARIMA model with automatic order selection"""
+    def _validate_time_series_setup(self, parsed_response, df, columns):
+        """Validate LLM's time series setup"""
+        time_col = parsed_response.get('time_column')
+        target_col = parsed_response.get('target_column')
+        
+        # Validate time column
+        if not time_col or time_col not in columns:
+            return False
+            
+        # Validate target column
+        if not target_col or target_col not in columns:
+            return False
+            
+        # Check if target is numeric
+        if not pd.api.types.is_numeric_dtype(df[target_col]):
+            return False
+            
+        return True
+    
+    def _apply_time_series_fallback(self, state, df, temporal_analysis):
+        """Apply intelligent fallback for time series setup"""
+        columns = list(df.columns)
+        
+        # Select time column
+        if temporal_analysis['time_candidates']:
+            self.time_column = temporal_analysis['time_candidates'][0]
+        else:
+            # Look for index that might be temporal
+            if isinstance(df.index, pd.DatetimeIndex):
+                self.time_column = df.index.name or 'index'
+            else:
+                # Use first column as potential time column
+                self.time_column = columns[0]
+                
+        # Select target column
+        numeric_cols = temporal_analysis['numeric_columns']
+        if numeric_cols:
+            # Prefer columns with time series keywords
+            ts_keywords = ['sales', 'price', 'demand', 'volume', 'count', 'amount']
+            target_candidates = []
+            
+            for col in numeric_cols:
+                if col != self.time_column:
+                    priority = 0
+                    col_lower = col.lower()
+                    for keyword in ts_keywords:
+                        if keyword in col_lower:
+                            priority += 10
+                    target_candidates.append((col, priority))
+                    
+            if target_candidates:
+                target_candidates.sort(key=lambda x: x[1], reverse=True)
+                state['target_column'] = target_candidates[0][0]
+            else:
+                state['target_column'] = numeric_cols[0]
+        else:
+            state['target_column'] = columns[-1]
+            
+        # Select feature columns
+        feature_cols = [col for col in columns 
+                       if col not in [self.time_column, state['target_column']]]
+        state['feature_columns'] = feature_cols[:5]  # Limit features
+        
+        # Set default time series parameters
+        state['data_info']['time_series_analysis'] = {
+            'time_column': self.time_column,
+            'frequency': 'D',
+            'seasonality_period': 12,
+            'forecast_horizon': 12,
+            'time_series_type': 'multivariate' if feature_cols else 'univariate',
+            'reasoning': 'Fallback selection based on column analysis',
+            'preprocessing_needs': ['stationarity_check', 'seasonal_decomposition'],
+            'suggested_models': ['ARIMA', 'Prophet', 'LinearRegression']
+        }
+        
+        self.frequency = 'D'
+        self.seasonality_period = 12
+        self.forecast_horizon = 12
+        
+        logger.info(f"🔄 Fallback time series setup: Time={self.time_column}, Target={state['target_column']}")
+
+    async def algorithm_recommendation_node(self, state: AgentState) -> AgentState:
+        """
+        Time series specific algorithm recommendation
+        """
+        logger.info("🤖 Getting time series algorithm recommendations from LLM")
+        
+        ts_analysis = state['data_info'].get('time_series_analysis', {})
+        
+        prompt = f"""
+        You are a time series forecasting expert. Recommend the BEST time series algorithms for this dataset:
+        
+        DATASET CHARACTERISTICS:
+        - Shape: {state['data_info']['shape']}
+        - Time Column: {ts_analysis.get('time_column', 'unknown')}
+        - Target: {state['target_column']}
+        - Frequency: {ts_analysis.get('frequency', 'unknown')}
+        - Seasonality: {ts_analysis.get('seasonality_period', 'unknown')}
+        - Type: {ts_analysis.get('time_series_type', 'unknown')}
+        - Features: {len(state['feature_columns'])} additional features
+        
+        TIME SERIES ALGORITHM CATEGORIES:
+        1. Statistical: ARIMA, SARIMA, Exponential Smoothing, Holt-Winters
+        2. Machine Learning: Prophet, XGBoost, Random Forest (with lag features)
+        3. Deep Learning: LSTM, GRU (if dataset is large enough)
+        4. Hybrid: Statistical + ML combinations
+        
+        CONSIDER:
+        - Dataset size ({state['data_info']['shape'][0]} time points)
+        - Seasonality patterns
+        - Trend characteristics
+        - Number of features (multivariate vs univariate)
+        - Interpretability vs accuracy trade-offs
+        
+        Recommend 4-6 algorithms in order of preference for this specific time series task.
+        
+        RESPOND WITH ONLY algorithm names, one per line:
+        """
+        
         try:
-            # Test for stationarity
-            adf_result = adfuller(train_ts.dropna())
-            is_stationary = adf_result[1] <= 0.05
+            response = await self.llm_client.get_llm_response(prompt, temperature=0.1)
             
-            # Determine differencing order
-            d = 0 if is_stationary else 1
-            if not is_stationary:
-                diff_series = train_ts.diff().dropna()
-                adf_diff = adfuller(diff_series)
-                if adf_diff[1] > 0.05:
-                    d = 2
-            
-            # Grid search for p and q
-            best_aic = float('inf')
-            best_order = None
-            best_model = None
-            
-            for p in range(0, 4):
-                for q in range(0, 4):
-                    try:
-                        model = ARIMA(train_ts, order=(p, d, q))
-                        fitted_model = model.fit()
-                        
-                        if fitted_model.aic < best_aic:
-                            best_aic = fitted_model.aic
-                            best_order = (p, d, q)
-                            best_model = fitted_model
-                    except:
-                        continue
-            
-            if best_model is None:
-                return None
-            
-            # Make predictions
-            forecast = best_model.forecast(steps=len(test_ts))
-            
-            # Calculate metrics
-            mse = np.mean((test_ts.values - forecast.values) ** 2)
-            mae = np.mean(np.abs(test_ts.values - forecast.values))
-            
-            # Return model info
-            return {
-                'model': best_model,
-                'order': best_order,
-                'metrics': {
-                    'mse': mse,
-                    'mae': mae,
-                    'aic': best_aic,
-                    'rmse': np.sqrt(mse)
-                },
-                'predictions': forecast.values.tolist(),
-                'model_type': 'time_series'
+            # Define time series algorithm mapping
+            ts_algorithms = {
+                'ARIMA', 'SARIMA', 'Prophet', 'ExponentialSmoothing', 'HoltWinters',
+                'LSTM', 'GRU', 'RandomForestTS', 'LinearRegressionTS', 'XGBoostTS',
+                'ETS', 'SARIMAX', 'SeasonalNaive', 'MovingAverage'
             }
             
+            algorithm_aliases = {
+                'arima': 'ARIMA',
+                'sarima': 'SARIMA', 
+                'sarimax': 'SARIMAX',
+                'prophet': 'Prophet',
+                'exponential smoothing': 'ExponentialSmoothing',
+                'holt winters': 'HoltWinters',
+                'holt-winters': 'HoltWinters',
+                'lstm': 'LSTM',
+                'gru': 'GRU',
+                'random forest': 'RandomForestTS',
+                'linear regression': 'LinearRegressionTS',
+                'xgboost': 'XGBoostTS',
+                'ets': 'ETS',
+                'seasonal naive': 'SeasonalNaive',
+                'moving average': 'MovingAverage'
+            }
+            
+            # Parse LLM response
+            algorithms = set()
+            response_lines = response.strip().split('\n')
+            
+            for line in response_lines:
+                line = line.strip().lower()
+                if not line or any(tag in line for tag in ['<thinking>', '</thinking>']):
+                    continue
+                    
+                # Remove bullets and numbering
+                line = re.sub(r"^\s*[\-•\d\.\)]*\s*", "", line)
+                
+                # Check aliases
+                for alias, full_name in algorithm_aliases.items():
+                    if alias in line:
+                        algorithms.add(full_name)
+                        break
+                        
+            algorithms = list(algorithms)
+            
+            # Apply intelligent defaults based on dataset characteristics
+            if not algorithms:
+                algorithms = self._get_default_ts_algorithms(state)
+                
+            # Ensure we have 3-5 algorithms
+            algorithms = algorithms[:5]
+            if len(algorithms) < 3:
+                defaults = ['ARIMA', 'Prophet', 'LinearRegressionTS']
+                algorithms.extend([alg for alg in defaults if alg not in algorithms])
+                
+            state['recommended_algorithms'] = algorithms
+            logger.info(f"✅ Recommended time series algorithms: {algorithms}")
+            
         except Exception as e:
-            logger.error(f"ARIMA training error: {e}")
-            return None
+            logger.error(f"Algorithm recommendation failed: {e}")
+            state['recommended_algorithms'] = self._get_default_ts_algorithms(state)
+            
+        return state
     
-    def _train_prophet(self, df, target_col, test_ts):
+    def _get_default_ts_algorithms(self, state):
+        """Get default algorithms based on dataset characteristics"""
+        dataset_size = state['data_info']['shape'][0]
+        has_features = len(state['feature_columns']) > 0
+        
+        if dataset_size < 50:
+            return ['MovingAverage', 'LinearRegressionTS', 'ExponentialSmoothing']
+        elif dataset_size < 200:
+            return ['ARIMA', 'ExponentialSmoothing', 'LinearRegressionTS']
+        elif has_features:
+            return ['Prophet', 'SARIMAX', 'RandomForestTS', 'LinearRegressionTS']
+        else:
+            return ['ARIMA', 'Prophet', 'ExponentialSmoothing', 'LSTM']
+
+    async def feature_analysis_node(self, state: AgentState) -> AgentState:
+        """
+        Time series specific feature engineering and analysis
+        """
+        logger.info("📊 Performing time series feature engineering")
+        
+        if state.get('raw_data') is None:
+            return state
+            
+        df = state['raw_data'].copy()
+        target_col = state['target_column']
+        time_col = self.time_column
+        
+        # Ensure time column is datetime
+        df = self._prepare_time_series_data(df, time_col)
+        
+        # Create time series features
+        ts_features = self._create_time_series_features(df, target_col, time_col)
+        
+        # Analyze seasonality and trends
+        seasonality_analysis = self._analyze_seasonality(df[target_col])
+        
+        # LLM-powered feature selection for time series
+        prompt = f"""
+        You are a time series feature engineering expert. Analyze these features for forecasting {target_col}.
+        
+        AVAILABLE FEATURES:
+        - Original features: {state['feature_columns']}
+        - Generated time features: {list(ts_features.keys())}
+        - Seasonality detected: {seasonality_analysis['has_seasonality']}
+        - Trend detected: {seasonality_analysis['has_trend']}
+        
+        TIME SERIES FEATURE TYPES:
+        1. Lag features: target_lag_1, target_lag_7, target_lag_30
+        2. Rolling statistics: rolling_mean_7, rolling_std_7  
+        3. Time-based: day_of_week, month, quarter, is_weekend
+        4. Seasonal: seasonal_component, trend_component
+        5. External features: {state['feature_columns']}
+        
+        SELECT 8-15 most predictive features for time series forecasting.
+        Prioritize features that capture temporal patterns and dependencies.
+        
+        RESPOND WITH JSON:
+        {{
+            "selected_features": ["feature1", "feature2", ...],
+            "feature_reasoning": "why these features for time series",
+            "lag_features": ["target_lag_1", "target_lag_7"],
+            "time_features": ["day_of_week", "month"],
+            "preprocessing_steps": ["handle_missing", "scale_features"]
+        }}
+        """
+        
+        try:
+            response = await self.llm_client.get_llm_response(prompt, temperature=0.1)
+            
+            # Parse response and validate features
+            parsed_response = self._parse_feature_response(response, ts_features, state['feature_columns'])
+            
+            if parsed_response and parsed_response.get('selected_features'):
+                state['feature_columns'] = parsed_response['selected_features']
+                
+                # Store time series feature analysis
+                state['data_info']['ts_feature_analysis'] = {
+                    'total_features': len(ts_features) + len(state['feature_columns']),
+                    'selected_count': len(parsed_response['selected_features']),
+                    'lag_features': parsed_response.get('lag_features', []),
+                    'time_features': parsed_response.get('time_features', []),
+                    'seasonality_analysis': seasonality_analysis,
+                    'feature_reasoning': parsed_response.get('feature_reasoning', '')
+                }
+                
+                # Update the dataset with engineered features
+                state['raw_data'] = self._add_features_to_dataset(df, ts_features, parsed_response['selected_features'])
+                
+            else:
+                # Fallback feature selection
+                state['feature_columns'] = self._select_default_ts_features(ts_features, state['feature_columns'])
+                state['raw_data'] = self._add_features_to_dataset(df, ts_features, state['feature_columns'])
+                
+        except Exception as e:
+            logger.error(f"Time series feature analysis failed: {e}")
+            # Emergency fallback
+            state['feature_columns'] = list(ts_features.keys())[:10]
+            state['raw_data'] = self._add_features_to_dataset(df, ts_features, state['feature_columns'])
+            
+        logger.info(f"✅ Time series feature engineering complete: {len(state['feature_columns'])} features selected")
+        return state
+        
+    def _prepare_time_series_data(self, df, time_col):
+        """Prepare and validate time series data"""
+        if time_col in df.columns:
+            try:
+                df[time_col] = pd.to_datetime(df[time_col])
+                df = df.sort_values(time_col).reset_index(drop=True)
+            except:
+                logger.warning(f"Could not convert {time_col} to datetime")
+        return df
+        
+    def _create_time_series_features(self, df, target_col, time_col):
+        """Create comprehensive time series features"""
+        features = {}
+        
+        if target_col not in df.columns:
+            return features
+            
+        target_series = df[target_col]
+        
+        # Lag features
+        for lag in [1, 2, 3, 7, 14, 30]:
+            if lag < len(target_series):
+                features[f'target_lag_{lag}'] = target_series.shift(lag)
+                
+        # Rolling statistics
+        for window in [3, 7, 14, 30]:
+            if window < len(target_series):
+                features[f'rolling_mean_{window}'] = target_series.rolling(window=window).mean()
+                features[f'rolling_std_{window}'] = target_series.rolling(window=window).std()
+                features[f'rolling_min_{window}'] = target_series.rolling(window=window).min()
+                features[f'rolling_max_{window}'] = target_series.rolling(window=window).max()
+                
+        # Time-based features if time column exists
+        if time_col in df.columns and pd.api.types.is_datetime64_any_dtype(df[time_col]):
+            dt_series = df[time_col]
+            features['day_of_week'] = dt_series.dt.dayofweek
+            features['month'] = dt_series.dt.month
+            features['quarter'] = dt_series.dt.quarter
+            features['day_of_month'] = dt_series.dt.day
+            features['is_weekend'] = (dt_series.dt.dayofweek >= 5).astype(int)
+            features['is_month_start'] = dt_series.dt.is_month_start.astype(int)
+            features['is_month_end'] = dt_series.dt.is_month_end.astype(int)
+            
+        # Difference features
+        features['target_diff_1'] = target_series.diff(1)
+        features['target_diff_7'] = target_series.diff(7)
+        
+        # Percentage change
+        features['target_pct_change_1'] = target_series.pct_change(1)
+        features['target_pct_change_7'] = target_series.pct_change(7)
+        
+        return features
+        
+    def _analyze_seasonality(self, series):
+        """Analyze seasonality patterns in the time series"""
+        analysis = {
+            'has_seasonality': False,
+            'has_trend': False,
+            'seasonality_strength': 0,
+            'trend_strength': 0
+        }
+        
+        try:
+            if len(series) > 24:  # Need sufficient data for decomposition
+                # Try seasonal decomposition
+                period = min(12, len(series) // 2)
+                decomposition = seasonal_decompose(series.dropna(), model='additive', period=period)
+                
+                # Calculate seasonality strength
+                seasonal_var = decomposition.seasonal.var()
+                residual_var = decomposition.resid.var()
+                
+                if not pd.isna(seasonal_var) and not pd.isna(residual_var) and residual_var > 0:
+                    analysis['seasonality_strength'] = seasonal_var / (seasonal_var + residual_var)
+                    analysis['has_seasonality'] = analysis['seasonality_strength'] > 0.3
+                    
+                # Calculate trend strength
+                trend_var = decomposition.trend.var()
+                if not pd.isna(trend_var) and residual_var > 0:
+                    analysis['trend_strength'] = trend_var / (trend_var + residual_var)
+                    analysis['has_trend'] = analysis['trend_strength'] > 0.3
+                    
+        except Exception as e:
+            logger.warning(f"Seasonality analysis failed: {e}")
+            
+        return analysis
+
+    def model_training_node(self, state: AgentState) -> AgentState:
+        """
+        Time series model training with proper validation
+        """
+        logger.info("🚀 Training time series models with temporal validation")
+        
+        if state['raw_data'] is None:
+            state['error_messages'].append("No data available for training")
+            return state
+            
+        try:
+            df = state['raw_data'].copy()
+            target_col = state['target_column']
+            time_col = self.time_column
+            
+            # Prepare time series data
+            df = self._prepare_time_series_data(df, time_col)
+            
+            # Handle missing values
+            df = df.fillna(method='ffill').fillna(method='bfill')
+            
+            # Split data temporally
+            train_size = int(len(df) * 0.8)
+            train_df = df.iloc[:train_size].copy()
+            test_df = df.iloc[train_size:].copy()
+            
+            # Prepare features and target
+            if state['feature_columns']:
+                X_train = train_df[state['feature_columns']].fillna(0)
+                X_test = test_df[state['feature_columns']].fillna(0)
+            else:
+                X_train = pd.DataFrame(index=train_df.index)
+                X_test = pd.DataFrame(index=test_df.index)
+                
+            y_train = train_df[target_col]
+            y_test = test_df[target_col]
+            
+            logger.info(f"Training data: {len(y_train)} points, Test data: {len(y_test)} points")
+            
+            # Get time series models
+            models = self._get_time_series_models(state['recommended_algorithms'])
+            trained_models = {}
+            
+            # Save feature names
+            with open("agents/feature_names_ts.json", "w") as f:
+                json.dump(state['feature_columns'], f)
+                
+            # Train each model
+            for name, model_info in models.items():
+                try:
+                    logger.info(f"🔧 Training {name}...")
+                    
+                    if name in ['ARIMA', 'SARIMA', 'ExponentialSmoothing']:
+                        # Statistical models
+                        predictions, model, metrics = self._train_statistical_model(
+                            name, y_train, y_test, model_info
+                        )
+                    elif name == 'Prophet':
+                        # Prophet model
+                        predictions, model, metrics = self._train_prophet_model(
+                            train_df, test_df, target_col, time_col
+                        )
+                    elif name == 'LSTM':
+                        # LSTM model
+                        predictions, model, metrics = self._train_lstm_model(
+                            y_train, y_test, X_train, X_test
+                        )
+                    else:
+                        # ML models with time series features
+                        predictions, model, metrics = self._train_ml_ts_model(
+                            name, X_train, y_train, X_test, y_test, model_info
+                        )
+                    
+                    # Cross-validation for time series
+                    cv_scores = self._time_series_cross_validation(name, y_train, X_train, model_info)
+                    metrics.update(cv_scores)
+                    
+                    trained_models[name] = {
+                        'model': model,
+                        'metrics': metrics,
+                        'predictions': predictions.tolist() if hasattr(predictions, 'tolist') else predictions
+                    }
+                    
+                    # Log performance
+                    logger.info(f"✅ {name} Training Complete:")
+                    for metric, value in metrics.items():
+                        if isinstance(value, (int, float)):
+                            logger.info(f"   {metric.upper()}: {value:.4f}")
+                    logger.info("")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to train {name}: {e}")
+                    state['error_messages'].append(f"Failed to train {name}: {str(e)}")
+                    
+            # Store results
+            state['trained_models'] = trained_models
+            
+            # Select best model
+            if trained_models:
+                best_model_info = self._select_best_ts_model(trained_models)
+                state['best_model'] = best_model_info
+                
+                # Save best model
+                try:
+                    model_filename = "agents/best_timeseries_model.joblib"
+                    self.save_model(state['best_model'], model_filename)
+                    logger.info(f"💾 Best model saved: {model_filename}")
+                except Exception as e:
+                    logger.error(f"Failed to save model: {e}")
+                    
+            logger.info(f"🎯 Time series training completed: {len(trained_models)} models trained")
+            if state.get('best_model'):
+                logger.info(f"🏆 Best model: {state['best_model']['name']} (MAE: {state['best_model']['metrics'].get('mae', 'N/A'):.4f})")
+                
+        except Exception as e:
+            logger.error(f"Time series model training failed: {e}")
+            state['error_messages'].append(f"Time series training failed: {str(e)}")
+            
+        return state
+        
+    def _get_time_series_models(self, algorithm_names):
+        """Get time series model instances"""
+        models = {}
+        
+        for name in algorithm_names:
+            if name == 'ARIMA':
+                models[name] = {'type': 'statistical', 'order': (1, 1, 1)}
+            elif name == 'SARIMA':
+                models[name] = {'type': 'statistical', 'order': (1, 1, 1), 'seasonal_order': (1, 1, 1, 12)}
+            elif name == 'ExponentialSmoothing':
+                models[name] = {'type': 'statistical', 'trend': 'add', 'seasonal': 'add'}
+            elif name == 'Prophet':
+                models[name] = {'type': 'prophet'}
+            elif name == 'LSTM':
+                models[name] = {'type': 'deep_learning', 'lookback': 10}
+            elif name == 'RandomForestTS':
+                models[name] = {'type': 'ml', 'model': RandomForestRegressor(n_estimators=100, random_state=42)}
+            elif name == 'LinearRegressionTS':
+                models[name] = {'type': 'ml', 'model': LinearRegression()}
+            else:
+                # Default to linear regression for unknown models
+                models[name] = {'type': 'ml', 'model': LinearRegression()}
+                
+        return models
+        
+    def _train_statistical_model(self, name, y_train, y_test, model_info):
+        """Train statistical time series models"""
+        try:
+            if name == 'ARIMA':
+                model = ARIMA(y_train, order=model_info['order'])
+                fitted_model = model.fit()
+                predictions = fitted_model.forecast(steps=len(y_test))
+                
+            elif name == 'SARIMA':
+                model = SARIMAX(y_train, 
+                              order=model_info['order'],
+                              seasonal_order=model_info['seasonal_order'])
+                fitted_model = model.fit(disp=False)
+                predictions = fitted_model.forecast(steps=len(y_test))
+                
+            elif name == 'ExponentialSmoothing':
+                model = ExponentialSmoothing(y_train,
+                                           trend=model_info.get('trend'),
+                                           seasonal=model_info.get('seasonal'),
+                                           seasonal_periods=12)
+                fitted_model = model.fit()
+                predictions = fitted_model.forecast(steps=len(y_test))
+                
+            # Calculate metrics
+            metrics = self._calculate_ts_metrics(y_test, predictions)
+            
+            return predictions, fitted_model, metrics
+            
+        except Exception as e:
+            logger.error(f"Statistical model training failed: {e}")
+            # Return dummy results
+            predictions = np.full(len(y_test), y_train.mean())
+            metrics = self._calculate_ts_metrics(y_test, predictions)
+            return predictions, None, metrics
+            
+    def _train_prophet_model(self, train_df, test_df, target_col, time_col):
         """Train Prophet model"""
         try:
-            # Prepare data for Prophet
-            prophet_df = df[[self.time_column, target_col]].copy()
-            prophet_df.columns = ['ds', 'y']
-            prophet_df = prophet_df.dropna().sort_values('ds')
-            
-            # Split data
-            split_point = len(prophet_df) - len(test_ts)
-            train_prophet = prophet_df[:split_point]
+            if not PROPHET_AVAILABLE:
+                raise ImportError("Prophet not available")
+                
+            # Prepare Prophet data format
+            prophet_train = pd.DataFrame({
+                'ds': train_df[time_col],
+                'y': train_df[target_col]
+            })
             
             # Initialize and fit Prophet
             model = Prophet(
-                daily_seasonality=True,
-                weekly_seasonality=True,
                 yearly_seasonality=True,
-                changepoint_prior_scale=0.05
+                weekly_seasonality=True,
+                daily_seasonality=False
             )
-            model.fit(train_prophet)
+            model.fit(prophet_train)
             
             # Make predictions
-            future = model.make_future_dataframe(periods=len(test_ts))
+            future = model.make_future_dataframe(periods=len(test_df))
             forecast = model.predict(future)
-            
-            # Extract test predictions
-            test_predictions = forecast['yhat'].tail(len(test_ts)).values
+            predictions = forecast['yhat'].iloc[-len(test_df):].values
             
             # Calculate metrics
-            mse = np.mean((test_ts.values - test_predictions) ** 2)
-            mae = np.mean(np.abs(test_ts.values - test_predictions))
+            y_test = test_df[target_col]
+            metrics = self._calculate_ts_metrics(y_test, predictions)
             
-            return {
-                'model': model,
-                'metrics': {
-                    'mse': mse,
-                    'mae': mae,
-                    'rmse': np.sqrt(mse)
-                },
-                'predictions': test_predictions.tolist(),
-                'forecast_df': forecast,
-                'model_type': 'time_series'
-            }
+            return predictions, model, metrics
             
         except Exception as e:
-            logger.error(f"Prophet training error: {e}")
-            return None
-    
-    def _train_sarima(self, train_ts, test_ts):
-        """Train SARIMA model"""
+            logger.error(f"Prophet training failed: {e}")
+            # Return dummy results
+            y_test = test_df[target_col]
+            predictions = np.full(len(y_test), train_df[target_col].mean())
+            metrics = self._calculate_ts_metrics(y_test, predictions)
+            return predictions, None, metrics
+            
+    def _train_lstm_model(self, y_train, y_test, X_train, X_test):
+        """Train LSTM model"""
         try:
-            # Detect seasonality
-            seasonal_period = self._detect_seasonality(train_ts)
+            if not TENSORFLOW_AVAILABLE:
+                raise ImportError("TensorFlow not available")
+                
+            # Prepare LSTM data
+            lookback = min(10, len(y_train) // 4)
+            X_lstm, y_lstm = self._create_lstm_sequences(y_train.values, lookback)
             
-            if seasonal_period is None:
-                return None  # No clear seasonality
+            # Build LSTM model
+            model = Sequential([
+                LSTM(50, return_sequences=True, input_shape=(lookback, 1)),
+                Dropout(0.2),
+                LSTM(50, return_sequences=False),
+                Dropout(0.2),
+                Dense(1)
+            ])
             
-            # Grid search for SARIMA parameters
-            best_aic = float('inf')
-            best_model = None
-            best_order = None
+            model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
             
-            for p in range(0, 3):
-                for d in range(0, 2):
-                    for q in range(0, 3):
-                        for P in range(0, 2):
-                            for D in range(0, 2):
-                                for Q in range(0, 2):
-                                    try:
-                                        model = SARIMAX(
-                                            train_ts,
-                                            order=(p, d, q),
-                                            seasonal_order=(P, D, Q, seasonal_period)
-                                        )
-                                        fitted_model = model.fit(disp=False)
-                                        
-                                        if fitted_model.aic < best_aic:
-                                            best_aic = fitted_model.aic
-                                            best_model = fitted_model
-                                            best_order = ((p, d, q), (P, D, Q, seasonal_period))
-                                    except:
-                                        continue
-            
-            if best_model is None:
-                return None
+            # Train model
+            model.fit(X_lstm, y_lstm, epochs=50, batch_size=32, verbose=0)
             
             # Make predictions
-            forecast = best_model.forecast(steps=len(test_ts))
+            predictions = []
+            current_sequence = y_train.values[-lookback:].reshape(1, lookback, 1)
             
-            # Calculate metrics
-            mse = np.mean((test_ts.values - forecast.values) ** 2)
-            mae = np.mean(np.abs(test_ts.values - forecast.values))
+            for _ in range(len(y_test)):
+                pred = model.predict(current_sequence, verbose=0)[0, 0]
+                predictions.append(pred)
+                # Update sequence
+                current_sequence = np.roll(current_sequence, -1, axis=1)
+                current_sequence[0, -1, 0] = pred
+                
+            predictions = np.array(predictions)
+            metrics = self._calculate_ts_metrics(y_test, predictions)
             
-            return {
-                'model': best_model,
-                'order': best_order,
-                'seasonal_period': seasonal_period,
-                'metrics': {
-                    'mse': mse,
-                    'mae': mae,
-                    'aic': best_aic,
-                    'rmse': np.sqrt(mse)
-                },
-                'predictions': forecast.values.tolist(),
-                'model_type': 'time_series'
-            }
+            return predictions, model, metrics
             
         except Exception as e:
-            logger.error(f"SARIMA training error: {e}")
-            return None
-    
-    def _detect_seasonality(self, ts_data, max_period=52):
-        """Detect seasonal patterns in time series"""
+            logger.error(f"LSTM training failed: {e}")
+            # Return dummy results
+            predictions = np.full(len(y_test), y_train.mean())
+            metrics = self._calculate_ts_metrics(y_test, predictions)
+            return predictions, None, metrics
+            
+    def _train_ml_ts_model(self, name, X_train, y_train, X_test, y_test, model_info):
+        """Train ML model for time series"""
         try:
-            from scipy.fft import fft
-            from scipy.signal import find_peaks
+            model = model_info['model']
             
-            # Remove trend
-            detrended = ts_data - ts_data.rolling(window=min(12, len(ts_data)//4)).mean()
-            detrended = detrended.dropna()
-            
-            if len(detrended) < 24:
-                return None
-            
-            # FFT analysis
-            fft_vals = fft(detrended.values)
-            freqs = np.fft.fftfreq(len(detrended))
-            
-            # Find peaks in frequency domain
-            power = np.abs(fft_vals)
-            peaks, _ = find_peaks(power[1:len(power)//2], height=np.std(power))
-            
-            if len(peaks) == 0:
-                return None
-            
-            # Convert to periods
-            periods = [1/abs(freqs[peak+1]) for peak in peaks if freqs[peak+1] != 0]
-            periods = [p for p in periods if 2 <= p <= max_period]
-            
-            if periods:
-                return int(round(periods[0]))
-            
-            return None
-            
-        except Exception as e:
-            logger.warning(f"Seasonality detection failed: {e}")
-            return None
-    
-    def _train_exponential_smoothing(self, train_ts, test_ts):
-        """Train Exponential Smoothing model using sktime"""
-        try:
-            from sktime.forecasting.exp_smoothing import ExponentialSmoothing
-            
-            model = ExponentialSmoothing(
-                trend="add",
-                seasonal="add",
-                sp=7  # Weekly seasonality
-            )
-            
-            model.fit(train_ts)
-            forecast = model.predict(fh=range(1, len(test_ts) + 1))
-            
-            # Calculate metrics
-            mse = np.mean((test_ts.values - forecast.values) ** 2)
-            mae = np.mean(np.abs(test_ts.values - forecast.values))
-            
-            return {
-                'model': model,
-                'metrics': {
-                    'mse': mse,
-                    'mae': mae,
-                    'rmse': np.sqrt(mse)
-                },
-                'predictions': forecast.values.tolist(),
-                'model_type': 'time_series'
-            }
-            
-        except Exception as e:
-            logger.error(f"Exponential Smoothing error: {e}")
-            return None
-    
-    def _select_best_model_with_ts(self, all_models):
-        """Select best model considering both regression and time series models"""
-        best_model = None
-        best_score = float('-inf')
-        
-        for name, model_data in all_models.items():
-            metrics = model_data['metrics']
-            
-            # Different scoring for different model types
-            if model_data.get('model_type') == 'time_series':
-                # For time series, use negative MSE (higher is better)
-                score = -metrics.get('mse', float('inf'))
+            # Handle empty feature case
+            if X_train.empty:
+                # Use simple average prediction
+                predictions = np.full(len(y_test), y_train.mean())
             else:
-                # For regression, use R²
-                score = metrics.get('r2', -float('inf'))
+                # Train model
+                model.fit(X_train, y_train)
+                predictions = model.predict(X_test)
+                
+            metrics = self._calculate_ts_metrics(y_test, predictions)
             
-            if score > best_score:
-                best_score = score
-                best_model = {
-                    'name': name,
-                    'model': model_data['model'],
-                    'metrics': metrics,
-                    'model_type': model_data.get('model_type', 'regression')
-                }
-        
-        return best_model
-    
-    def predict_future(self, periods=None):
-        """Generate future predictions for time series models"""
-        if not self.is_time_series:
-            logger.error("Not a time series model")
-            return None
-        
-        if periods is None:
-            periods = self.forecast_horizon
-        
-        try:
-            best_model = self.state.get('best_model')
-            if not best_model or best_model.get('model_type') != 'time_series':
-                logger.error("No time series model available for prediction")
-                return None
-            
-            model = best_model['model']
-            model_name = best_model['name']
-            
-            if model_name == 'ARIMA' or model_name == 'SARIMA':
-                forecast = model.forecast(steps=periods)
-                return {
-                    'forecast': forecast.values.tolist(),
-                    'model_used': model_name,
-                    'periods': periods
-                }
-            
-            elif model_name == 'Prophet':
-                future = model.make_future_dataframe(periods=periods)
-                forecast = model.predict(future)
-                future_forecast = forecast['yhat'].tail(periods)
-                return {
-                    'forecast': future_forecast.values.tolist(),
-                    'model_used': model_name,
-                    'periods': periods,
-                    'confidence_intervals': {
-                        'lower': forecast['yhat_lower'].tail(periods).values.tolist(),
-                        'upper': forecast['yhat_upper'].tail(periods).values.tolist()
-                    }
-                }
+            return predictions, model, metrics
             
         except Exception as e:
-            logger.error(f"Future prediction failed: {e}")
-            return None
+            logger.error(f"ML time series training failed: {e}")
+            predictions = np.full(len(y_test), y_train.mean())
+            metrics = self._calculate_ts_metrics(y_test, predictions)
+            return predictions, None, metrics
+            
+    def _create_lstm_sequences(self, data, lookback):
+        """Create sequences for LSTM training"""
+        X, y = [], []
+        for i in range(lookback, len(data)):
+            X.append(data[i-lookback:i])
+            y.append(data[i])
+        return np.array(X).reshape(-1, lookback, 1), np.array(y)
+        
+    def _calculate_ts_metrics(self, y_true, y_pred):
+        """Calculate comprehensive time series metrics"""
+        try:
+            metrics = {
+                'mae': mean_absolute_error(y_true, y_pred),
+                'mse': mean_squared_error(y_true, y_pred),
+                'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
+                'mape': mean_absolute_percentage_error(y_true, y_pred) * 100,
+                'max_error': np.max(np.abs(y_true - y_pred))
+            }
+            
+            # Add R² if possible
+            try:
+                from sklearn.metrics import r2_score
+                metrics['r2'] = r2_score(y_true, y_pred)
+            except:
+                pass
+                
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Metrics calculation failed: {e}")
+            return {'mae': float('inf'), 'mse': float('inf'), 'rmse': float('inf')}
+            
+    def _time_series_cross_validation(self, model_name, y_train, X_train, model_info):
+        """Time series cross-validation"""
+        try:
+            if len(y_train) < 30:  # Not enough data for CV
+                return {'cv_mae_mean': 0, 'cv_mae_std': 0}
+                
+            tscv = TimeSeriesSplit(n_splits=3)
+            cv_scores = []
+            
+            for train_idx, val_idx in tscv.split(y_train):
+                try:
+                    y_cv_train = y_train.iloc[train_idx]
+                    y_cv_val = y_train.iloc[val_idx]
+                    
+                    if model_name in ['ARIMA', 'SARIMA', 'ExponentialSmoothing']:
+                        if model_name == 'ARIMA':
+                            model = ARIMA(y_cv_train, order=(1, 1, 1))
+                            fitted = model.fit()
+                            pred = fitted.forecast(steps=len(y_cv_val))
+                        else:
+                            pred = np.full(len(y_cv_val), y_cv_train.mean())
+                    else:
+                        pred = np.full(len(y_cv_val), y_cv_train.mean())
+                        
+                    mae = mean_absolute_error(y_cv_val, pred)
+                    cv_scores.append(mae)
+                    
+                except Exception:
+                    continue
+                    
+            if cv_scores:
+                return {
+                    'cv_mae_mean': np.mean(cv_scores),
+                    'cv_mae_std': np.std(cv_scores)
+                }
+            else:
+                return {'cv_mae_mean': 0, 'cv_mae_std': 0}
+                
+        except Exception as e:
+            logger.error(f"Time series CV failed: {e}")
+            return {'cv_mae_mean': 0, 'cv_mae_std': 0}
+            
+    def _select_best_ts_model(self, trained_models):
+        """Select best time series model based on MAE"""
+        best_model_name = min(trained_models.keys(),
+                             key=lambda x: trained_models[x]['metrics'].get('mae', float('inf')))
+        
+        return {
+            'name': best_model_name,
+            'model': trained_models[best_model_name]['model'],
+            'metrics': trained_models[best_model_name]['metrics']
+        }
+        
+    # Helper methods for JSON parsing and feature selection
+    
+    def _clean_json_response(self, response):
+        """Clean LLM response to extract JSON"""
+        cleaned = response.strip()
+        cleaned = re.sub(r'<thinking>.*?</thinking>', '', cleaned, flags=re.DOTALL)
+        
+        if '```' in cleaned:
+            cleaned = re.sub(r'```json\s*', '', cleaned)
+            cleaned = re.sub(r'```')
+        elif '```' in cleaned:
+            cleaned = re.sub(r'```')
+            cleaned = re.sub(r'```\s*$', '', cleaned)
+            
+        json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+        return json_match.group(0) if json_match else '{}'
+        
+    def _parse_feature_response(self, response, ts_features, original_features):
+        """Parse LLM feature selection response"""
+        try:
+            cleaned_response = self._clean_json_response(response)
+            parsed = json.loads(cleaned_response)
+            
+            # Validate selected features exist
+            all_available = list(ts_features.keys()) + original_features
+            selected = parsed.get('selected_features', [])
+            valid_selected = [f for f in selected if f in all_available]
+            
+            if valid_selected:
+                parsed['selected_features'] = valid_selected
+                return parsed
+                
+        except Exception as e:
+            logger.error(f"Feature response parsing failed: {e}")
+            
+        return None
+        
+    def _select_default_ts_features(self, ts_features, original_features):
+        """Select default time series features"""
+        selected = []
+        
+        # Add important lag features
+        for feature in ts_features:
+            if 'lag' in feature and any(lag in feature for lag in ['_1', '_7']):
+                selected.append(feature)
+                
+        # Add rolling statistics
+        for feature in ts_features:
+            if 'rolling_mean' in feature:
+                selected.append(feature)
+                break
+                
+        # Add time features
+        time_features = ['day_of_week', 'month', 'is_weekend']
+        for feature in time_features:
+            if feature in ts_features:
+                selected.append(feature)
+                
+        # Add some original features
+        selected.extend(original_features[:3])
+        
+        return selected[:12]  # Limit to 12 features
+        
+    def _add_features_to_dataset(self, df, ts_features, selected_features):
+        """Add engineered features to dataset"""
+        result_df = df.copy()
+        
+        for feature_name in selected_features:
+            if feature_name in ts_features:
+                result_df[feature_name] = ts_features[feature_name]
+                
+        return result_df
+        
+    def save_model(self, model_info, filepath):
+        """Save time series model with metadata"""
+        try:
+            model_package = {
+                'model': model_info['model'],
+                'metrics': model_info['metrics'],
+                'model_type': 'time_series',
+                'target_column': getattr(self, 'target_column', None),
+                'time_column': getattr(self, 'time_column', None),
+                'frequency': getattr(self, 'frequency', None),
+                'forecast_horizon': getattr(self, 'forecast_horizon', 12)
+            }
+            
+            joblib.dump(model_package, filepath)
+            logger.info(f"✅ Time series model saved to {filepath}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save time series model: {e}")
+            return False
 
 # Usage example
 async def main():
-    """Example usage with time series data"""
+    """Example usage of TimeSeriesAgent"""
+    agent = TimeSeriesAgent(groq_api_key="your_groq_api_key_here")
     
-    # Initialize the time series regression agent
-    agent = TimeSeriesRegressionAgent(groq_api_key="API")
-    
-    # Analyze a time series CSV
-    results = await agent.analyze_csv("transactions_sampled_30000.csv")
+    # Analyze time series data
+    results = await agent.analyze_csv("your_timeseries_data.csv")
     
     print(f"🎯 Problem Type: {results['problem_type']}")
+    print(f"📅 Time Column: {results.get('data_info', {}).get('time_series_analysis', {}).get('time_column', 'N/A')}")
     print(f"📊 Target: {results['target_column']}")
-    print(f"🕐 Time Column: {agent.time_column}")
+    print(f"🔧 Features: {len(results['feature_columns'])}")
     print(f"🏆 Best Model: {results['best_model']['name']}")
-    
-    # Generate future predictions if it's a time series
-    if agent.is_time_series:
-        future_predictions = agent.predict_future(periods=30)
-        print(f"🔮 Future predictions: {len(future_predictions['forecast'])} periods")
+    print(f"📈 MAE: {results['best_model']['metrics'].get('mae', 'N/A'):.4f}")
+    print(f"📉 MAPE: {results['best_model']['metrics'].get('mape', 'N/A'):.2f}%")
 
 if __name__ == "__main__":
     import asyncio
