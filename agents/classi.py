@@ -1119,7 +1119,7 @@ async def main():
     """Example usage of the ClassificationSpecialistAgent"""
     
     # Initialize the classification specialist
-    agent = ClassificationSpecialistAgent(groq_api_key="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")
+    agent = ClassificationSpecialistAgent(groq_api_key="API")
     
     # Analyze a CSV file
     results = await agent.analyze_csv("agents/housing.csv")
