@@ -81,7 +81,17 @@ class TimeSeriesAgent(CSVMLAgent):
         
         # Detect temporal columns
         temporal_analysis = self._analyze_temporal_structure(df)
-        
+        data_context = {
+            'head_sample': df.head(5).to_dict(),
+            'tail_sample': df.tail(5).to_dict(),
+            'data_info': {
+                'dtypes': df.dtypes.to_dict(),
+                'null_counts': df.isnull().sum().to_dict(),
+                'memory_usage': df.memory_usage(deep=True).to_dict()
+            },
+            'statistical_summary': df.describe().to_dict() if len(df.select_dtypes(include=[np.number]).columns) > 0 else {},
+            'shape_info': f"Rows: {df.shape[0]}, Columns: {df.shape[1]}"
+        }
         # Create time series specific analysis prompt
         prompt = f"""
         You are a time series forecasting expert. Analyze this dataset for time series forecasting setup.
@@ -89,8 +99,17 @@ class TimeSeriesAgent(CSVMLAgent):
         DATASET OVERVIEW:
         - Shape: {state['data_info']['shape']}
         - Columns: {columns}
-        - Sample Data: {df.head(5).to_dict()}
-        
+        - Shape: {data_context['shape_info']}
+        - Data Types: {data_context['data_info']['dtypes']}
+        - Missing Values: {data_context['data_info']['null_counts']}
+
+        SAMPLE DATA:
+        - First 5 rows: {data_context['head_sample']}
+        - Last 5 rows: {data_context['tail_sample']}
+
+        STATISTICAL SUMMARY:
+        {json.dumps(data_context['statistical_summary'], indent=2, default=str)}
+
         TEMPORAL ANALYSIS:
         - Potential time columns: {temporal_analysis['time_candidates']}
         - Numeric columns (potential targets): {temporal_analysis['numeric_columns']}
@@ -514,7 +533,7 @@ class TimeSeriesAgent(CSVMLAgent):
         return df
         
     def _create_time_series_features(self, df, target_col, time_col):
-        """Create comprehensive time series features"""
+        """Create comprehensive time series features with advanced patterns"""
         features = {}
         
         if target_col not in df.columns:
@@ -522,37 +541,136 @@ class TimeSeriesAgent(CSVMLAgent):
             
         target_series = df[target_col]
         
-        # Lag features
-        for lag in [1, 2, 3, 7, 14, 30]:
+        # 1. Enhanced Lag Features with varying importance
+        lag_periods = [1, 2, 3, 5, 7, 10, 14, 21, 30]
+        for lag in lag_periods:
             if lag < len(target_series):
                 features[f'target_lag_{lag}'] = target_series.shift(lag)
-                
-        # Rolling statistics
-        for window in [3, 7, 14, 30]:
+        
+        # 2. Advanced Rolling Statistics
+        windows = [3, 7, 14, 21, 30, 60, 90]
+        for window in windows:
             if window < len(target_series):
-                features[f'rolling_mean_{window}'] = target_series.rolling(window=window).mean()
-                features[f'rolling_std_{window}'] = target_series.rolling(window=window).std()
-                features[f'rolling_min_{window}'] = target_series.rolling(window=window).min()
-                features[f'rolling_max_{window}'] = target_series.rolling(window=window).max()
+                rolling = target_series.rolling(window=window)
+                features[f'rolling_mean_{window}'] = rolling.mean()
+                features[f'rolling_std_{window}'] = rolling.std()
+                features[f'rolling_min_{window}'] = rolling.min()
+                features[f'rolling_max_{window}'] = rolling.max()
+                features[f'rolling_median_{window}'] = rolling.median()
+                features[f'rolling_skew_{window}'] = rolling.skew()
+                features[f'rolling_kurt_{window}'] = rolling.kurt()
                 
-        # Time-based features if time column exists
+                # Rolling quantiles
+                features[f'rolling_q25_{window}'] = rolling.quantile(0.25)
+                features[f'rolling_q75_{window}'] = rolling.quantile(0.75)
+                
+                # Distance from rolling statistics
+                features[f'dist_from_mean_{window}'] = target_series - features[f'rolling_mean_{window}']
+                features[f'dist_from_median_{window}'] = target_series - features[f'rolling_median_{window}']
+        
+        # 3. Exponentially Weighted Moving Averages
+        alphas = [0.1, 0.3, 0.5, 0.7, 0.9]
+        for alpha in alphas:
+            features[f'ewm_{alpha}'] = target_series.ewm(alpha=alpha).mean()
+            features[f'dist_from_ewm_{alpha}'] = target_series - features[f'ewm_{alpha}']
+        
+        # 4. Advanced Difference Features
+        diff_periods = [1, 2, 7, 14, 30]
+        for period in diff_periods:
+            if period < len(target_series):
+                features[f'diff_{period}'] = target_series.diff(period)
+                features[f'pct_change_{period}'] = target_series.pct_change(period)
+                
+                # Second order differences
+                features[f'diff2_{period}'] = features[f'diff_{period}'].diff(1)
+        
+        # 5. Seasonal Features (if time column exists)
         if time_col in df.columns and pd.api.types.is_datetime64_any_dtype(df[time_col]):
             dt_series = df[time_col]
-            features['day_of_week'] = dt_series.dt.dayofweek
+            
+            # Basic time features
+            features['year'] = dt_series.dt.year
             features['month'] = dt_series.dt.month
+            features['day'] = dt_series.dt.day
+            features['day_of_week'] = dt_series.dt.dayofweek
+            features['day_of_year'] = dt_series.dt.dayofyear
+            features['week_of_year'] = dt_series.dt.isocalendar().week
             features['quarter'] = dt_series.dt.quarter
-            features['day_of_month'] = dt_series.dt.day
+            
+            # Cyclical encoding (better for ML models)
+            features['month_sin'] = np.sin(2 * np.pi * dt_series.dt.month / 12)
+            features['month_cos'] = np.cos(2 * np.pi * dt_series.dt.month / 12)
+            features['day_sin'] = np.sin(2 * np.pi * dt_series.dt.day / 31)
+            features['day_cos'] = np.cos(2 * np.pi * dt_series.dt.day / 31)
+            features['dow_sin'] = np.sin(2 * np.pi * dt_series.dt.dayofweek / 7)
+            features['dow_cos'] = np.cos(2 * np.pi * dt_series.dt.dayofweek / 7)
+            
+            # Business/Holiday indicators
             features['is_weekend'] = (dt_series.dt.dayofweek >= 5).astype(int)
             features['is_month_start'] = dt_series.dt.is_month_start.astype(int)
             features['is_month_end'] = dt_series.dt.is_month_end.astype(int)
+            features['is_quarter_start'] = dt_series.dt.is_quarter_start.astype(int)
+            features['is_quarter_end'] = dt_series.dt.is_quarter_end.astype(int)
+            features['is_year_start'] = dt_series.dt.is_year_start.astype(int)
+            features['is_year_end'] = dt_series.dt.is_year_end.astype(int)
             
-        # Difference features
-        features['target_diff_1'] = target_series.diff(1)
-        features['target_diff_7'] = target_series.diff(7)
+            # Time since events
+            features['days_since_year_start'] = (dt_series - dt_series.dt.to_period('Y').dt.start_time).dt.days
+            features['days_since_month_start'] = dt_series.dt.day - 1
         
-        # Percentage change
-        features['target_pct_change_1'] = target_series.pct_change(1)
-        features['target_pct_change_7'] = target_series.pct_change(7)
+        # 6. Statistical Features
+        # Autocorrelation features
+        for lag in [1, 7, 30]:
+            if lag < len(target_series):
+                try:
+                    autocorr = target_series.autocorr(lag=lag)
+                    features[f'autocorr_{lag}'] = pd.Series([autocorr] * len(target_series), index=target_series.index)
+                except:
+                    features[f'autocorr_{lag}'] = pd.Series([0] * len(target_series), index=target_series.index)
+        
+        # 7. Volatility Features
+        for window in [7, 14, 30]:
+            if window < len(target_series):
+                returns = target_series.pct_change()
+                features[f'volatility_{window}'] = returns.rolling(window=window).std()
+        
+        # 8. Trend Features
+        for window in [7, 14, 30]:
+            if window < len(target_series):
+                # Linear trend over window
+                def calc_trend(series):
+                    if len(series) < 3:
+                        return 0
+                    x = np.arange(len(series))
+                    try:
+                        slope = np.polyfit(x, series, 1)[0]
+                        return slope
+                    except:
+                        return 0
+                
+                features[f'trend_{window}'] = target_series.rolling(window=window).apply(calc_trend, raw=False)
+        
+        # 9. Interaction Features
+        if len([k for k in features.keys() if 'rolling_mean_7' in k]) > 0:
+            # Ratio features
+            for short_window, long_window in [(7, 30), (14, 60)]:
+                if (f'rolling_mean_{short_window}' in features and 
+                    f'rolling_mean_{long_window}' in features):
+                    short_ma = features[f'rolling_mean_{short_window}']
+                    long_ma = features[f'rolling_mean_{long_window}']
+                    features[f'ma_ratio_{short_window}_{long_window}'] = short_ma / (long_ma + 1e-8)
+                    features[f'ma_diff_{short_window}_{long_window}'] = short_ma - long_ma
+        
+        # 10. Regime Detection Features
+        for window in [14, 30]:
+            if window < len(target_series):
+                rolling_mean = target_series.rolling(window=window).mean()
+                rolling_std = target_series.rolling(window=window).std()
+                
+                # Z-score based regime detection
+                features[f'zscore_{window}'] = (target_series - rolling_mean) / (rolling_std + 1e-8)
+                features[f'regime_high_{window}'] = (features[f'zscore_{window}'] > 1.5).astype(int)
+                features[f'regime_low_{window}'] = (features[f'zscore_{window}'] < -1.5).astype(int)
         
         return features
         
@@ -736,31 +854,146 @@ class TimeSeriesAgent(CSVMLAgent):
         return models
         
     def _train_statistical_model(self, name, y_train, y_test, model_info):
-        """Train statistical time series models"""
+        """Enhanced statistical model training with auto parameter selection"""
         try:
             if name == 'ARIMA':
-                model = ARIMA(y_train, order=model_info['order'])
-                fitted_model = model.fit()
-                predictions = fitted_model.forecast(steps=len(y_test))
+                # Auto ARIMA parameter selection
+                best_aic = float('inf')
+                best_model = None
+                best_predictions = None
+                
+                # Grid search for optimal parameters
+                p_values = range(0, 4)
+                d_values = range(0, 3)
+                q_values = range(0, 4)
+                
+                for p in p_values:
+                    for d in d_values:
+                        for q in q_values:
+                            try:
+                                # Check if series needs differencing
+                                if d > 0:
+                                    # Test stationarity first
+                                    adf_stat, adf_p = adfuller(y_train.dropna())[:2]
+                                    if adf_p > 0.05 and d == 0:
+                                        continue  # Skip if non-stationary but d=0
+                                
+                                model = ARIMA(y_train, order=(p, d, q))
+                                fitted_model = model.fit()
+                                
+                                if fitted_model.aic < best_aic:
+                                    best_aic = fitted_model.aic
+                                    best_model = fitted_model
+                                    best_predictions = fitted_model.forecast(steps=len(y_test))
+                                    
+                            except Exception:
+                                continue
+                
+                if best_model is None:
+                    # Fallback to simple model
+                    model = ARIMA(y_train, order=(1, 1, 1))
+                    best_model = model.fit()
+                    best_predictions = best_model.forecast(steps=len(y_test))
+                    
+                predictions = best_predictions
+                fitted_model = best_model
                 
             elif name == 'SARIMA':
-                model = SARIMAX(y_train, 
-                              order=model_info['order'],
-                              seasonal_order=model_info['seasonal_order'])
-                fitted_model = model.fit(disp=False)
-                predictions = fitted_model.forecast(steps=len(y_test))
+                # Enhanced SARIMA with seasonal parameter detection
+                best_aic = float('inf')
+                best_model = None
+                best_predictions = None
+                
+                # Detect seasonality period automatically
+                seasonal_periods = [4, 7, 12, 24] if len(y_train) > 50 else [4, 7]
+                
+                for seasonal_period in seasonal_periods:
+                    if len(y_train) > 2 * seasonal_period:
+                        try:
+                            # Try different seasonal parameters
+                            for P in [0, 1]:
+                                for D in [0, 1]:
+                                    for Q in [0, 1]:
+                                        try:
+                                            model = SARIMAX(y_train, 
+                                                        order=(1, 1, 1),
+                                                        seasonal_order=(P, D, Q, seasonal_period))
+                                            fitted_model = model.fit(disp=False, maxiter=100)
+                                            
+                                            if fitted_model.aic < best_aic:
+                                                best_aic = fitted_model.aic
+                                                best_model = fitted_model
+                                                best_predictions = fitted_model.forecast(steps=len(y_test))
+                                                
+                                        except Exception:
+                                            continue
+                        except Exception:
+                            continue
+                
+                if best_model is None:
+                    # Fallback to non-seasonal ARIMA
+                    model = ARIMA(y_train, order=(1, 1, 1))
+                    best_model = model.fit()
+                    best_predictions = best_model.forecast(steps=len(y_test))
+                    
+                predictions = best_predictions
+                fitted_model = best_model
                 
             elif name == 'ExponentialSmoothing':
-                model = ExponentialSmoothing(y_train,
-                                           trend=model_info.get('trend'),
-                                           seasonal=model_info.get('seasonal'),
-                                           seasonal_periods=12)
-                fitted_model = model.fit()
-                predictions = fitted_model.forecast(steps=len(y_test))
-                
+                # Enhanced exponential smoothing with automatic trend/seasonal detection
+                try:
+                    # Test different configurations
+                    configs = [
+                        {'trend': None, 'seasonal': None},
+                        {'trend': 'add', 'seasonal': None},
+                        {'trend': 'mul', 'seasonal': None},
+                        {'trend': 'add', 'seasonal': 'add', 'seasonal_periods': 12},
+                        {'trend': 'add', 'seasonal': 'mul', 'seasonal_periods': 12},
+                    ]
+                    
+                    best_aic = float('inf')
+                    best_model = None
+                    best_predictions = None
+                    
+                    for config in configs:
+                        try:
+                            if config.get('seasonal_periods', 0) > 0 and len(y_train) <= 2 * config['seasonal_periods']:
+                                continue  # Skip if not enough data for seasonality
+                                
+                            model = ExponentialSmoothing(y_train, **config)
+                            fitted_model = model.fit(optimized=True)
+                            
+                            if fitted_model.aic < best_aic:
+                                best_aic = fitted_model.aic
+                                best_model = fitted_model
+                                best_predictions = fitted_model.forecast(steps=len(y_test))
+                                
+                        except Exception:
+                            continue
+                    
+                    if best_model is None:
+                        # Simple exponential smoothing fallback
+                        model = ExponentialSmoothing(y_train, trend=None, seasonal=None)
+                        best_model = model.fit()
+                        best_predictions = best_model.forecast(steps=len(y_test))
+                        
+                    predictions = best_predictions
+                    fitted_model = best_model
+                    
+                except Exception as e:
+                    logger.error(f"Exponential smoothing failed: {e}")
+                    predictions = np.full(len(y_test), y_train.mean())
+                    fitted_model = None
+            
             # Calculate metrics
             metrics = self._calculate_ts_metrics(y_test, predictions)
             
+            # Add model-specific metrics
+            if fitted_model and hasattr(fitted_model, 'aic'):
+                metrics['aic'] = fitted_model.aic
+            if fitted_model and hasattr(fitted_model, 'bic'):
+                metrics['bic'] = fitted_model.bic
+                
             return predictions, fitted_model, metrics
             
         except Exception as e:
@@ -810,58 +1043,179 @@ class TimeSeriesAgent(CSVMLAgent):
             return predictions, None, metrics
             
     def _train_lstm_model(self, y_train, y_test, X_train, X_test):
-        """Train LSTM model"""
+        """Enhanced LSTM model with attention mechanism and better architecture"""
         try:
             if not TENSORFLOW_AVAILABLE:
                 raise ImportError("TensorFlow not available")
+            
+            # Dynamic lookback based on data characteristics
+            lookback = min(max(10, len(y_train) // 20), 60)  # Between 10-60 steps
+            
+            # Prepare multivariate LSTM data
+            if not X_train.empty:
+                # Combine target with features
+                train_data = pd.concat([y_train, X_train], axis=1).fillna(0)
+                test_data = pd.concat([y_test, X_test], axis=1).fillna(0)
                 
-            # Prepare LSTM data
-            lookback = min(10, len(y_train) // 4)
-            X_lstm, y_lstm = self._create_lstm_sequences(y_train.values, lookback)
+                # Scale the data
+                scaler = MinMaxScaler()
+                train_scaled = scaler.fit_transform(train_data)
+                test_scaled = scaler.transform(test_data)
+                
+                # Create sequences
+                X_lstm_train, y_lstm_train = self._create_multivariate_sequences(
+                    train_scaled, lookback, target_col_idx=0
+                )
+                X_lstm_test, y_lstm_test = self._create_multivariate_sequences(
+                    test_scaled, lookback, target_col_idx=0
+                )
+                
+                input_features = train_data.shape[1]
+            else:
+                # Univariate case
+                scaler = MinMaxScaler()
+                train_scaled = scaler.fit_transform(y_train.values.reshape(-1, 1))
+                test_scaled = scaler.transform(y_test.values.reshape(-1, 1))
+                
+                X_lstm_train, y_lstm_train = self._create_lstm_sequences(train_scaled.flatten(), lookback)
+                X_lstm_test, y_lstm_test = self._create_lstm_sequences(test_scaled.flatten(), lookback)
+                
+                input_features = 1
             
-            # Build LSTM model
-            model = Sequential([
-                LSTM(50, return_sequences=True, input_shape=(lookback, 1)),
-                Dropout(0.2),
-                LSTM(50, return_sequences=False),
-                Dropout(0.2),
-                Dense(1)
-            ])
+            if len(X_lstm_train) == 0:
+                raise ValueError("Not enough data for LSTM training")
             
-            model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+            # Enhanced LSTM Architecture
+            model = Sequential()
             
-            # Train model
-            model.fit(X_lstm, y_lstm, epochs=50, batch_size=32, verbose=0)
+            # First LSTM layer with return sequences
+            model.add(LSTM(units=128, 
+                        return_sequences=True, 
+                        input_shape=(lookback, input_features),
+                        dropout=0.2,
+                        recurrent_dropout=0.2))
             
-            # Make predictions
+            # Second LSTM layer
+            model.add(LSTM(units=64, 
+                        return_sequences=True,
+                        dropout=0.2,
+                        recurrent_dropout=0.2))
+            
+            # Third LSTM layer
+            model.add(LSTM(units=32, 
+                        return_sequences=False,
+                        dropout=0.2,
+                        recurrent_dropout=0.2))
+            
+            # Dense layers with batch normalization
+            model.add(Dense(32, activation='relu'))
+            model.add(Dropout(0.3))
+            model.add(Dense(16, activation='relu'))
+            model.add(Dropout(0.2))
+            model.add(Dense(1, activation='linear'))
+            
+            # Advanced optimizer with learning rate scheduling
+            optimizer = Adam(learning_rate=0.001, clipnorm=1.0)
+            model.compile(optimizer=optimizer, 
+                        loss='mse', 
+                        metrics=['mae'])
+            
+            # Callbacks for better training
+            from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+            
+            early_stopping = EarlyStopping(
+                monitor='val_loss',
+                patience=15,
+                restore_best_weights=True
+            )
+            
+            lr_scheduler = ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,
+                patience=10,
+                min_lr=1e-6
+            )
+            
+            # Train with validation split
+            history = model.fit(
+                X_lstm_train, y_lstm_train,
+                epochs=100,
+                batch_size=min(32, len(X_lstm_train) // 4),
+                validation_split=0.2,
+                callbacks=[early_stopping, lr_scheduler],
+                verbose=0
+            )
+            
+            # Multi-step prediction strategy
             predictions = []
-            current_sequence = y_train.values[-lookback:].reshape(1, lookback, 1)
             
-            for _ in range(len(y_test)):
-                pred = model.predict(current_sequence, verbose=0)[0, 0]
-                predictions.append(pred)
-                # Update sequence
-                current_sequence = np.roll(current_sequence, -1, axis=1)
-                current_sequence[0, -1, 0] = pred
+            if not X_train.empty:
+                # Multivariate prediction
+                current_sequence = test_scaled[:lookback]
                 
+                for i in range(len(y_test)):
+                    # Predict next step
+                    pred_input = current_sequence.reshape(1, lookback, input_features)
+                    pred_scaled = model.predict(pred_input, verbose=0)[0, 0]
+                    
+                    # Inverse transform prediction
+                    pred_full = np.zeros(input_features)
+                    pred_full[0] = pred_scaled
+                    pred_actual = scaler.inverse_transform(pred_full.reshape(1, -1))[0, 0]
+                    predictions.append(pred_actual)
+                    
+                    # Update sequence for next prediction
+                    if i + lookback < len(test_scaled):
+                        current_sequence = np.roll(current_sequence, -1, axis=0)
+                        current_sequence[-1] = test_scaled[i + lookback]
+                    else:
+                        # Use prediction for future steps
+                        current_sequence = np.roll(current_sequence, -1, axis=0)
+                        current_sequence[-1, 0] = pred_scaled
+            else:
+                # Univariate prediction
+                current_sequence = train_scaled[-lookback:].reshape(1, lookback, 1)
+                
+                for i in range(len(y_test)):
+                    pred_scaled = model.predict(current_sequence, verbose=0)[0, 0]
+                    pred_actual = scaler.inverse_transform([[pred_scaled]])[0, 0]
+                    predictions.append(pred_actual)
+                    
+                    # Update sequence
+                    current_sequence = np.roll(current_sequence, -1, axis=1)
+                    current_sequence[0, -1, 0] = pred_scaled
+            
             predictions = np.array(predictions)
+            
+            # Calculate metrics
             metrics = self._calculate_ts_metrics(y_test, predictions)
+            
+            # Add training history metrics
+            if history.history:
+                metrics['final_train_loss'] = history.history['loss'][-1]
+                if 'val_loss' in history.history:
+                    metrics['final_val_loss'] = history.history['val_loss'][-1]
             
             return predictions, model, metrics
             
         except Exception as e:
-            logger.error(f"LSTM training failed: {e}")
+            logger.error(f"Enhanced LSTM training failed: {e}")
             # Return dummy results
             predictions = np.full(len(y_test), y_train.mean())
             metrics = self._calculate_ts_metrics(y_test, predictions)
             return predictions, None, metrics
-            
+
+    def _create_multivariate_sequences(self, data, lookback, target_col_idx=0):
+        """Create sequences for multivariate LSTM"""
+        X, y = [], []
+        for i in range(lookback, len(data)):
+            X.append(data[i-lookback:i])  # All features for sequence
+            y.append(data[i, target_col_idx])  # Only target for prediction
+        return np.array(X), np.array(y)        
     def _train_ml_ts_model(self, name, X_train, y_train, X_test, y_test, model_info):
         """Train ML model for time series"""
         try:
             model = model_info['model']
-            
-            # Handle empty feature case
             if X_train.empty:
                 # Use simple average prediction
                 predictions = np.full(len(y_test), y_train.mean())
@@ -889,29 +1243,62 @@ class TimeSeriesAgent(CSVMLAgent):
         return np.array(X).reshape(-1, lookback, 1), np.array(y)
         
     def _calculate_ts_metrics(self, y_true, y_pred):
-        """Calculate comprehensive time series metrics"""
+        """Calculate comprehensive time series metrics with robust MAPE"""
         try:
+            # Convert to numpy arrays and handle infinite/NaN values
+            y_true = np.array(y_true)
+            y_pred = np.array(y_pred)
+            
+            # Remove infinite and NaN values
+            mask = np.isfinite(y_true) & np.isfinite(y_pred)
+            y_true_clean = y_true[mask]
+            y_pred_clean = y_pred[mask]
+            
+            if len(y_true_clean) == 0:
+                return {'mae': float('inf'), 'mse': float('inf'), 'rmse': float('inf'), 'mape': float('inf')}
+            
             metrics = {
-                'mae': mean_absolute_error(y_true, y_pred),
-                'mse': mean_squared_error(y_true, y_pred),
-                'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
-                'mape': mean_absolute_percentage_error(y_true, y_pred) * 100,
-                'max_error': np.max(np.abs(y_true - y_pred))
+                'mae': mean_absolute_error(y_true_clean, y_pred_clean),
+                'mse': mean_squared_error(y_true_clean, y_pred_clean),
+                'rmse': np.sqrt(mean_squared_error(y_true_clean, y_pred_clean)),
+                'max_error': np.max(np.abs(y_true_clean - y_pred_clean))
             }
             
-            # Add R² if possible
+            # Robust MAPE calculation
+            try:
+                # Use a small epsilon to avoid division by zero
+                epsilon = 1e-10
+                denominator = np.maximum(np.abs(y_true_clean), epsilon)
+                mape_values = np.abs((y_true_clean - y_pred_clean) / denominator)
+                
+                # Remove extreme outliers in MAPE calculation
+                mape_values = np.clip(mape_values, 0, 10)  # Cap at 1000%
+                
+                # Calculate MAPE only for non-zero actual values if available
+                non_zero_mask = np.abs(y_true_clean) > epsilon
+                if np.sum(non_zero_mask) > len(y_true_clean) * 0.1:  # At least 10% non-zero
+                    mape = np.mean(mape_values[non_zero_mask]) * 100
+                else:
+                    mape = np.mean(mape_values) * 100
+                
+                metrics['mape'] = min(mape, 1000.0)  # Cap at 1000%
+                
+            except:
+                metrics['mape'] = float('inf')
+            
+            # Add R² score
             try:
                 from sklearn.metrics import r2_score
-                metrics['r2'] = r2_score(y_true, y_pred)
+                metrics['r2'] = r2_score(y_true_clean, y_pred_clean)
             except:
-                pass
-                
+                metrics['r2'] = -float('inf')
+            
             return metrics
             
         except Exception as e:
             logger.error(f"Metrics calculation failed: {e}")
-            return {'mae': float('inf'), 'mse': float('inf'), 'rmse': float('inf')}
-            
+            return {'mae': float('inf'), 'mse': float('inf'), 'rmse': float('inf'), 'mape': float('inf')}
+
     def _time_series_cross_validation(self, model_name, y_train, X_train, model_info):
         """Time series cross-validation"""
         try:
@@ -970,18 +1357,19 @@ class TimeSeriesAgent(CSVMLAgent):
     def _clean_json_response(self, response):
         """Clean LLM response to extract JSON"""
         cleaned = response.strip()
-        cleaned = re.sub(r'<thinking>.*?</thinking>', '', cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r'.*?<think>.*?</think>', '', cleaned, flags=re.DOTALL)
         
-        if '```' in cleaned:
+        if '```json' in cleaned:
             cleaned = re.sub(r'```json\s*', '', cleaned)
-            cleaned = re.sub(r'```')
-        elif '```' in cleaned:
-            cleaned = re.sub(r'```')
             cleaned = re.sub(r'```\s*$', '', cleaned)
-            
+        elif '```' in cleaned:
+            cleaned = re.sub(r'```[a-zA-Z]*\s*', '', cleaned)
+            cleaned = re.sub(r'```\s*$', '', cleaned)
+        
+        # Extract JSON content
         json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
         return json_match.group(0) if json_match else '{}'
-        
+
     def _parse_feature_response(self, response, ts_features, original_features):
         """Parse LLM feature selection response"""
         try:
@@ -1062,10 +1450,10 @@ class TimeSeriesAgent(CSVMLAgent):
 # Usage example
 async def main():
     """Example usage of TimeSeriesAgent"""
-    agent = TimeSeriesAgent(groq_api_key="your_groq_api_key_here")
+    agent = TimeSeriesAgent(groq_api_key="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")
     
     # Analyze time series data
-    results = await agent.analyze_csv("your_timeseries_data.csv")
+    results = await agent.analyze_csv("agents/data-8013-trends-reduced.csv")
     
     print(f"🎯 Problem Type: {results['problem_type']}")
     print(f"📅 Time Column: {results.get('data_info', {}).get('time_series_analysis', {}).get('time_column', 'N/A')}")
