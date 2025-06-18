@@ -1,0 +1,7 @@
+{
+    "timegpt_token": "nixak-AI31YupjpWhin07kPGKOhvW5zj8IliWOlTSWLEInpOuKHNWNhtSETsXIFgyEiYT58g3Hk0hvMFhnJpdS",
+    "top_n_products": 15,
+    "test_days": 21,
+    "forecast_horizon": 14,
+    "confidence_levels": [75, 90]
+}
