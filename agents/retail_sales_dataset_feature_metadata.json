@@ -1,0 +1,20 @@
+{
+  "original_file": "agents/retail_sales_dataset.csv",
+  "enhanced_file": "agents/retail_sales_dataset_enhanced.csv",
+  "original_shape": [
+    1000,
+    9
+  ],
+  "enhanced_shape": [
+    1000,
+    9
+  ],
+  "feature_engineering_results": {
+    "original_features": 3,
+    "new_features": 0,
+    "total_features": 3,
+    "new_feature_names": [],
+    "engineering_code": "import pandas as pd\nimport numpy as np\nfrom sklearn.preprocessing import PolynomialFeatures"
+  },
+  "timestamp": "2025-06-19T16:55:02.787872"
+}

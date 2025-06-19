@@ -1,0 +1,20 @@
+{
+  "original_file": "agents/housing.csv",
+  "enhanced_file": "agents/housing_enhanced.csv",
+  "original_shape": [
+    20640,
+    10
+  ],
+  "enhanced_shape": [
+    20640,
+    10
+  ],
+  "feature_engineering_results": {
+    "original_features": 9,
+    "new_features": 0,
+    "total_features": 9,
+    "new_feature_names": [],
+    "engineering_code": "import pandas as pd\nimport numpy as np\nfrom sklearn.preprocessing import PolynomialFeatures"
+  },
+  "timestamp": "2025-06-19T16:20:05.816797"
+}

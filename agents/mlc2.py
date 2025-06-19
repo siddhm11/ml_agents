@@ -115,7 +115,11 @@ class AgentState(TypedDict):
     best_model: Dict[str, Any] = field(default_factory=dict)
     evaluation_results: Dict[str, Any] = field(default_factory=dict)
     final_recommendations: str = ""
-    error_messages: List[str] = field(default_factory=list)
+    error_messages: List[str] = field(default_factory=list)  # Ensure this is always initialized
+    feature_engineering_results: Dict[str, Any] = field(default_factory=dict)
+    enhanced_dataset_path: str = ""
+    feature_metadata_path: str = ""
+    
 
 class CSVMLAgent:
     def __init__(self, groq_api_key: Optional[str] = None):
@@ -138,6 +142,7 @@ class CSVMLAgent:
         workflow.add_node("model_training", self.model_training_node)
         workflow.add_node("evaluation_analysis", self.evaluation_analysis_node)
         workflow.add_node("final_recommendation", self.final_recommendation_node)
+        workflow.add_node("feature_engineering", self.feature_engineering_node)
         
         # Define the workflow
         workflow.set_entry_point("csv_loader")
@@ -145,7 +150,8 @@ class CSVMLAgent:
         workflow.add_edge("initial_inspection", "data_quality_assessment")
         workflow.add_edge("data_quality_assessment", "problem_identification")
         workflow.add_edge("problem_identification", "feature_analysis")
-        workflow.add_edge("feature_analysis", "algorithm_recommendation")
+        workflow.add_edge("feature_analysis", "feature_engineering")
+        workflow.add_edge("feature_engineering", "algorithm_recommendation")
         workflow.add_edge("algorithm_recommendation", "preprocessing_strategy")
         workflow.add_edge("preprocessing_strategy", "model_training")
         workflow.add_edge("model_training", "evaluation_analysis")
@@ -751,6 +757,321 @@ class CSVMLAgent:
             logger.error(f"Statistical feature selection failed: {e}")
             return features[:max_features]  # Last resort
 
+    async def feature_engineering_node(self, state: AgentState) -> AgentState:
+        """LLM-powered feature engineering node that generates new features"""
+        logger.info("🔧 Performing advanced feature engineering with LLM")
+        if 'error_messages' not in state:
+            state['error_messages'] = []
+
+        if state['raw_data'] is None or not state['feature_columns']:
+            return state
+        
+        df = state['raw_data'].copy()
+        selected_features = state['feature_columns']
+        target_col = state['target_column']
+        
+        # Analyze existing features for engineering opportunities
+        feature_analysis = self._analyze_features_for_engineering(df, selected_features, target_col)
+        logger.info(f"Starting feature engineering with {len(selected_features)} features")
+        logger.info(f"Features: {selected_features}")
+        logger.info(f"Dataset shape: {df.shape}")
+        # LLM prompt for feature engineering
+        # LLM prompt for feature engineering
+        prompt = f"""
+        Generate Python code for feature engineering. Be concise and use only basic operations.
+
+        DATASET: {df.shape[0]} rows, {len(selected_features)} features
+        TARGET: {target_col}
+        FEATURES: {selected_features}
+        DATA HEAD : {df.head(5).to_string()}
+
+        Create these features using pandas/numpy:
+        1. Polynomial features (square numeric columns)
+        2. Interaction features (multiply important features)
+        3. Ratio features (divide numeric features)
+        4. Binning (categorize continuous features)
+        5. Log transformations (for skewed data)
+
+        REQUIREMENTS:
+        - Work with dataframe 'df'
+        - Only ADD columns, don't modify existing
+        - Handle missing values with fillna()
+        - Use simple pandas operations
+
+        Return ONLY executable Python code:
+
+        import pandas as pd
+        import numpy as np
+
+        # Feature engineering code here
+        """
+
+        try:
+            response = await self.llm_client.get_llm_response(prompt, temperature=0.1)
+            logger.info(f"response from llm : {response}")
+            # Extract Python code from response
+            code = self._extract_python_code(response)
+
+            
+            if code:
+                # Execute the feature engineering code
+                enhanced_df = await self._execute_feature_engineering_code(df, code, state)
+                logger.info("✅ Advanced feature engineering completed")
+                
+                if enhanced_df is not None:
+                    # Update state with enhanced dataframe
+                    state['raw_data'] = enhanced_df
+                    
+                    
+                    # Update feature columns to include new ones
+                    new_features = [col for col in enhanced_df.columns 
+                                if col not in df.columns and col != target_col]
+                    
+                    state['feature_columns'].extend(new_features)
+                    
+                    # Store feature engineering info
+                    state['feature_engineering_results'] = {
+                        'original_features': len(selected_features),
+                        'new_features': len(new_features),
+                        'total_features': len(state['feature_columns']),
+                        'new_feature_names': new_features,
+                        'engineering_code': code
+                    }
+                    
+                    # Save enhanced dataset to new CSV
+                    await self._save_enhanced_dataset(enhanced_df, state)
+                    
+                    logger.info(f"✅ Feature engineering complete: {len(selected_features)} → {len(state['feature_columns'])} features")
+                    logger.info(f"📄 New features: {new_features}")
+                else:
+                    logger.error("Feature engineering code execution failed")
+                    state['error_messages'].append("Feature engineering code execution failed")
+            else:
+                logger.error("No valid Python code extracted from LLM response")
+                state['error_messages'].append("No valid feature engineering code generated")
+                
+        except Exception as e:
+            logger.error(f"Feature engineering failed: {e}")
+            state['error_messages'].append(f"Feature engineering failed: {str(e)}")
+        
+        return state
+
+    def _analyze_features_for_engineering(self, df, features, target_col):
+        """Analyze features to provide context for engineering"""
+        analysis = {}
+        
+        numeric_features = df[features].select_dtypes(include=[np.number]).columns.tolist()
+        categorical_features = df[features].select_dtypes(include=['object']).columns.tolist()
+        
+        # Correlation analysis for numeric features
+        if len(numeric_features) > 1:
+            corr_matrix = df[numeric_features].corr()
+            high_corr_pairs = []
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    corr_val = abs(corr_matrix.iloc[i, j])
+                    if 0.3 < corr_val < 0.9:  # Moderate correlation for interactions
+                        high_corr_pairs.append({
+                            'feature1': corr_matrix.columns[i],
+                            'feature2': corr_matrix.columns[j],
+                            'correlation': corr_val
+                        })
+            analysis['interaction_candidates'] = high_corr_pairs[:5]
+        
+        # Feature statistics
+        analysis['numeric_features'] = []
+        for col in numeric_features:
+            analysis['numeric_features'].append({
+                'name': col,
+                'dtype': str(df[col].dtype),
+                'min': float(df[col].min()),
+                'max': float(df[col].max()),
+                'std': float(df[col].std()),
+                'skewness': float(df[col].skew())
+            })
+        
+        analysis['categorical_features'] = []
+        for col in categorical_features:
+            analysis['categorical_features'].append({
+                'name': col,
+                'unique_count': int(df[col].nunique()),
+                'top_values': df[col].value_counts().head(3).to_dict()
+            })
+        
+        return analysis
+
+    def _extract_python_code(self, response):
+        """Extract Python code from LLM response"""
+        import re
+        
+        # Remove thinking tags first
+        cleaned_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
+        
+        # Try to find code block with proper backticks (3, not 6!)
+        code_match = re.search(r'```python\n(.*?)\n```', cleaned_response, re.DOTALL)
+        if code_match:
+            return code_match.group(1).strip()
+
+        # Try to find any code block with 3 backticks
+        code_match = re.search(r'```\n?(.*?)\n?```', cleaned_response, re.DOTALL)
+        if code_match:
+            return code_match.group(1).strip()
+
+        # Fallback: Look for lines that start with typical Python patterns
+        lines = cleaned_response.split('\n')
+        code_lines = []
+        in_code = False
+        
+        for line in lines:
+            stripped_line = line.strip()
+            
+            # Start extracting when we see Python code patterns
+            if any(pattern in stripped_line for pattern in ['df[', 'import ', 'np.', 'pd.', '=']):
+                in_code = True
+            
+            if in_code:
+                # Include Python code lines
+                if (stripped_line.startswith(('df', 'import', 'np.', 'pd.')) or 
+                    '=' in stripped_line or 
+                    stripped_line.startswith('#') or 
+                    not stripped_line):
+                    code_lines.append(line)
+                # Stop if we hit explanatory text
+                elif (stripped_line and 
+                    not stripped_line.startswith('#') and 
+                    len(stripped_line.split()) > 4 and
+                    not any(char in stripped_line for char in ['=', '(', ')', '[', ']'])):
+                    break
+        
+        extracted_code = '\n'.join(code_lines).strip()
+        logger.info(f"Extracted code length: {len(extracted_code)} characters")
+        logger.info(f"First 200 chars: {extracted_code[:200]}...")
+        
+        return extracted_code if extracted_code else None
+
+    async def _execute_feature_engineering_code(self, df, code, state):
+        """Safely execute feature engineering code"""
+        try:
+            logger.info(f"Executing feature engineering code:")
+            logger.info(f"Code to execute:\n{code}")
+            
+            # Create a safe copy of the dataframe
+            df_copy = df.copy()
+            numeric_cols = ['bhk', 'area', 'age', 'price_lakhs']
+            for col in numeric_cols:
+                if col in df_copy.columns:
+                    df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
+            # Create safe execution environment
+            safe_globals = {
+                'pd': pd,
+                'np': np,
+                'df': df_copy,
+                '__builtins__': {
+                    'len': len, 'range': range, 'min': min, 'max': max,
+                    'abs': abs, 'round': round, 'float': float, 'int': int,
+                    'str': str, 'list': list, 'dict': dict, '__import__': __import__
+                }
+            }
+            
+            # Clean the code further
+            cleaned_code = code.strip()
+            
+            # Remove any remaining markdown artifacts - FIXED
+            cleaned_code = re.sub(r'```python\n?', '', cleaned_code)  # Remove opening markdown
+            cleaned_code = re.sub(r'```.*?$', '', cleaned_code, flags=re.MULTILINE)  # Remove closing markdown
+            
+            # Remove thinking content if any slipped through
+            cleaned_code = re.sub(r'.*?requires categorizing.*?executable\.', '', cleaned_code, flags=re.DOTALL)
+            
+            # Ensure we only have actual Python code lines
+            code_lines = []
+            for line in cleaned_code.split('\n'):
+                stripped = line.strip()
+                # Only include lines that look like Python code
+                if (stripped.startswith(('df', 'import', 'np.', 'pd.', '#')) or
+                    '=' in stripped or
+                    not stripped):
+                    code_lines.append(line)
+            
+            final_code = '\n'.join(code_lines).strip()
+            
+            # Add imports if missing
+            if 'import pandas as pd' not in final_code:
+                final_code = 'import pandas as pd\nimport numpy as np\n' + final_code
+            
+            logger.info(f"Final cleaned code:\n{final_code}")
+            
+            # Execute the code
+            exec(final_code, safe_globals)
+            
+            # Get the modified dataframe
+            enhanced_df = safe_globals['df']
+            
+            # Validate the result
+            if enhanced_df.shape[0] != df.shape[0]:
+                logger.error("Feature engineering changed number of rows")
+                return None
+            
+            new_columns = [col for col in enhanced_df.columns if col not in df.columns]
+            logger.info(f"New columns created: {new_columns}")
+            
+            if len(new_columns) == 0:
+                logger.warning("No new features were created")
+                return df
+            
+            # Clean up any issues in new features
+            for col in new_columns:
+                if enhanced_df[col].dtype in ['float64', 'int64']:
+                    # Replace infinite values
+                    enhanced_df[col] = enhanced_df[col].replace([np.inf, -np.inf], np.nan)
+                    # Fill missing values
+                    if enhanced_df[col].isnull().any():
+                        enhanced_df[col] = enhanced_df[col].fillna(enhanced_df[col].median())
+            
+            logger.info(f"✅ Feature engineering successful: {df.shape[1]} → {enhanced_df.shape[1]} columns")
+            return enhanced_df
+            
+        except Exception as e:
+            logger.error(f"Error executing feature engineering code: {e}")
+            logger.error(f"Code that failed:\n{code}")
+            return None
+
+    async def _save_enhanced_dataset(self, enhanced_df, state):
+        """Save the enhanced dataset to a new CSV file"""
+        try:
+            # Create enhanced dataset filename
+            original_path = Path(state['csv_path'])
+            enhanced_filename = f"{original_path.stem}_enhanced.csv"
+            enhanced_path = original_path.parent / enhanced_filename
+            
+            # Save enhanced dataset
+            enhanced_df.to_csv(enhanced_path, index=False)
+            
+            # Also save feature engineering metadata
+            metadata = {
+                'original_file': state['csv_path'],
+                'enhanced_file': str(enhanced_path),
+                'original_shape': state['data_info']['shape'],
+                'enhanced_shape': enhanced_df.shape,
+                'feature_engineering_results': state.get('feature_engineering_results', {}),
+                'timestamp': pd.Timestamp.now().isoformat()
+            }
+            
+            metadata_path = original_path.parent / f"{original_path.stem}_feature_metadata.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2, default=str)
+            
+            logger.info(f"💾 Enhanced dataset saved to: {enhanced_path}")
+            logger.info(f"📋 Metadata saved to: {metadata_path}")
+            
+            # Update state with file paths
+            state['enhanced_dataset_path'] = str(enhanced_path)
+            state['feature_metadata_path'] = str(metadata_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to save enhanced dataset: {e}")
+            state['error_messages'].append(f"Failed to save enhanced dataset: {str(e)}")
+    
     async def algorithm_recommendation_node(self, state: AgentState) -> AgentState:
         """LLM recommends optimal algorithms with correct problem type mapping"""
         logger.info("Getting algorithm recommendations from LLM")

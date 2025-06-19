@@ -1,1 +1,1 @@
-["Unit Price", "Quantity", "Discount", "Line Total", "Store ID", "Employee ID", "Size", "Currency", "Transaction Type"]
+["bhk", "area", "type", "status", "age", "bhk_squared", "area_squared", "age_squared", "price_lakhs_squared", "bhk_area", "area_age", "area_per_bhk", "age_per_area", "age_bins", "log_area"]
