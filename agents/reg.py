@@ -1241,7 +1241,7 @@ async def main():
     """Example usage of the RegressionSpecialistAgent"""
     
     # Initialize the regression specialist
-    agent = RegressionSpecialistAgent(groq_api_key="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")
+    agent = RegressionSpecialistAgent(groq_api_key="//")
     
     # Analyze a CSV file
     results = await agent.analyze_csv("agents/Mumbai House Prices with Lakhs.csv")

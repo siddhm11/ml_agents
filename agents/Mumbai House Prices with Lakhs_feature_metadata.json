@@ -17,15 +17,15 @@
       "bhk_squared",
       "area_squared",
       "age_squared",
-      "price_lakhs_squared",
-      "bhk_area",
-      "area_age",
+      "bhk_area_interaction",
+      "area_age_interaction",
       "area_per_bhk",
-      "age_per_area",
+      "age_per_bhk",
       "age_bins",
-      "log_area"
+      "area_log",
+      "age_log"
     ],
-    "engineering_code": "import pandas as pd\nimport numpy as np\n\n# Polynomial features\ndf['bhk_squared'] = df['bhk'] ** 2\ndf['area_squared'] = df['area'] ** 2\ndf['age_squared'] = df['age'] ** 2\ndf['price_lakhs_squared'] = df['price_lakhs'] ** 2\n\n# Interaction features\ndf['bhk_area'] = df['bhk'] * df['area']\ndf['area_age'] = df['area'] * df['age']\n\n# Ratio features\ndf['area_per_bhk'] = df['area'] / df['bhk'].replace(0, 1).fillna(1)\ndf['age_per_area'] = df['age'] / df['area'].replace(0, 1).fillna(1)\n\n# Binning\ndf['age_bins'] = pd.cut(df['age'], bins=[0, 10, 20, 30, 40, 50], labels=['0-10', '10-20', '20-30', '30-40', '40-50'])\n\n# Log transformations\ndf['log_area'] = np.log(df['area'] + 1).fillna(0)\n\n# Handle missing values\ndf['bhk_squared'].fillna(df['bhk'].mean(), inplace=True)\ndf['area_squared'].fillna(df['area'].mean(), inplace=True)\ndf['age_squared'].fillna(df['age'].mean(), inplace=True)\ndf['price_lakhs_squared'].fillna(df['price_lakhs'].mean(), inplace=True)\n\ndf['bhk_area'].fillna(df['bhk'] * df['area'].mean(), inplace=True)\ndf['area_age'].fillna(df['area'] * df['age'].mean(), inplace=True)\n\ndf['area_per_bhk'].fillna(df['area'] / df['bhk'].mean(), inplace=True)\ndf['age_per_area'].fillna(df['age'] / df['area'].mean(), inplace=True)\n\ndf['log_area'].fillna(0, inplace=True)"
+    "engineering_code": "import pandas as pd\nimport numpy as np\n\n# Polynomial features\ndf['bhk_squared'] = df['bhk'] ** 2\ndf['area_squared'] = df['area'] ** 2\ndf['age_squared'] = df['age'] ** 2\n\n# Interaction features\ndf['bhk_area_interaction'] = df['bhk'] * df['area']\ndf['area_age_interaction'] = df['area'] * df['age']\n\n# Ratio features\ndf['area_per_bhk'] = df['area'] / df['bhk'].fillna(0)\ndf['age_per_bhk'] = df['age'] / df['bhk'].fillna(0)\n\n# Binning features\ndf['age_bins'] = pd.cut(df['age'].fillna(0), \n                        bins=[0, 10, 20, 30, 50], \n                        labels=['Low', 'Medium', 'High', 'Very High'])\n\n# Log transformations\ndf['area_log'] = np.log(df['area'].fillna(1) + 1)\ndf['age_log'] = np.log(df['age'].fillna(1) + 1)"
   },
-  "timestamp": "2025-06-19T18:45:40.922879"
+  "timestamp": "2025-06-23T15:09:53.174677"
 }
