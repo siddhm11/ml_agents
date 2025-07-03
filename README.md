@@ -65,17 +65,79 @@ Because each step is decoupled, you can swap “brains” (OpenAI, llama.cpp, Hu
 
 ---
 
-## High‑level Flow
+# 🤖 CSV‑to‑Model Agent Pipeline
+
+Turn **any tabular dataset** into an end‑to‑end machine‑learning solution — from raw `.csv` to deployable model and narrative report — using a **graph of cooperating AI agents** built with **LangGraph** (sometimes spelled “Langrath”).
+
+---
+
+## 1 · Why LangGraph?
+
+| LangGraph feature | Why it matters here |
+|-------------------|---------------------|
+| **Directed async graph** | Lets us declare the *exact* execution order, branch on conditions (e.g. classification vs regression), and run I/O‑heavy nodes concurrently. |
+| **Shared, typed state** | A single `AgentState` travels through the entire graph, eliminating fragile kwargs and making every node testable in isolation. |
+| **Built‑in observability** | Each edge logs its inputs/outputs, giving us a reproducible audit trail for regulated environments. |
+| **Hot‑swappable nodes** | Need a different LLM provider? Swap just the LLM‑backed nodes; the rest of the graph stays intact. |
+
+> **TL;DR:** LangGraph is the **orchestration layer** that turns a pile of agent functions into a controllable, maintainable system.
+
+---
+
+## 2 · What Are AI Agents?
+
+> *“An AI agent is a self‑contained software entity that perceives, reasons, and takes actions toward a goal.”*
+
+In this repo **each node *is* an agent**: it receives the current `AgentState`, performs a bounded task (often consulting an LLM), mutates the state, and hands control to the next node.  
+Because every node is autonomous, you can:
+
+* Replace an LLM call with rules (for air‑gapped deployments).
+* Parallelise nodes that only read state.
+* Inject domain‑specific logic by subclassing a single node (see `RegressionSpecialistAgent`).
+
+---
+
+## 3 · Architecture at a Glance
 
 ```mermaid
-flowchart LR
-    A[csv_loader] --> B[initial_inspection]
-    B --> C[data_quality_assessment]
-    C --> D[problem_identification]
-    D --> E[feature_analysis]
-    E --> F[feature_engineering]
-    F --> G[algorithm_recommendation]
-    G --> H[preprocessing_strategy]
-    H --> I[model_training]
-    I --> J[evaluation_analysis]
-    J --> K[final_recommendation]
+flowchart TD
+    %% ---------- SUB‑GRAPH 1 ----------
+    subgraph "🗂 Ingestion & Inspection"
+        A1[csv_loader_node] --> A2[initial_inspection_node]
+        A2 --> A3[data_quality_assessment_node]
+    end
+
+    %% ---------- SUB‑GRAPH 2 ----------
+    subgraph "🔍 Problem Scoping"
+        A3 --> B1[problem_identification_node]
+        B1 --> B2{task type?}
+    end
+
+    %% ---------- SUB‑GRAPH 3 ----------
+    subgraph "🛠 Feature Design"
+        B2 -->|regression / classification / clustering| C1[feature_analysis_node]
+        C1 --> C2[feature_engineering_node]
+    end
+
+    %% ---------- SUB‑GRAPH 4 ----------
+    subgraph "🧠 Strategy Synthesis"
+        C2 --> D1[algorithm_recommendation_node]
+        D1 --> D2[preprocessing_strategy_node]
+    end
+
+    %% ---------- SUB‑GRAPH 5 ----------
+    subgraph "🏋️ Training & Selection"
+        D2 --> E1[model_training_node]
+    end
+
+    %% ---------- SUB‑GRAPH 6 ----------
+    subgraph "📈 Evaluation & Report"
+        E1 --> F1[evaluation_analysis_node]
+        F1 --> G1[final_recommendation_node]
+    end
+
+    %% ---------- LLM‑backed nodes (pink) ----------
+    classDef llm fill:#ffe6ff,stroke:#660066,stroke-width:1px
+    class B1,D1,F1 llm
+
+
