@@ -6,7 +6,7 @@ Automatically turn **any CSV file** into a production‑ready machine‑learning
 
 ## Table of Contents
 1. [Key Ideas](#key-ideas)
-2. [Why LangGraph (“Langrath”)?](#why-langgraph-langrath)
+2. [Why LangGraph (“Langrath”)?](#why-langgraph-langraph)
 3. [What Are AI Agents?](#what-are-ai-agents)
 4. [High‑level Flow](#high-level-flow)
 5. [Detailed Pipeline](#detailed-pipeline)
