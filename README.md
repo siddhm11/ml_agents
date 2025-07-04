@@ -85,18 +85,12 @@ This is not a simple linear script but an event-driven, stateful AI agent system
 Essentially, you give the agent its mission (the CSV file), and it handles all the complex, intelligent work behind the scenes to deliver the insights you need.
 
 ## Project Structure (Simplified)
+in agents\
 
 *   `mlc2.py`: Contains the core `CSVMLAgent` class, `LLMClient`, `AgentState`, and the LangGraph workflow definition.
 *   `reg.py`: Defines `RegressionSpecialistAgent`, specializing the core agent for regression tasks.
 *   `classi.py`: Defines `ClassificationSpecialistAgent`, specializing the core agent for classification tasks.
 
-## Contributing
-
-Contributions are welcome! Please refer to the contribution guidelines for more details.
-
-## License
-
-[MIT License]
 
 ```mermaid
 flowchart TD
