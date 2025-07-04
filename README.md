@@ -27,7 +27,8 @@ Key characteristics of our AI Agent:
 *   **Action & Tools:** Performs tasks or interacts with the data using specific tools (like running a regression model or performing feature scaling).
 *   **Learning/Adaptation:** Improves performance over time based on experience and new data.
 
-![AI Agent Self-Driving Car Analogy](https://private-us-east-1.manuscdn.com/sessionFile/aVsJ2QldvpeWL4PnBpqrlq/sandbox/EtKpSUUoYKN1OyygGDeLlv-images_1751605844014_na1fn_L2hvbWUvdWJ1bnR1L0pSZURzdjA1WHExbg.webp?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvYVZzSjJRbGR2cGVXTDRQbkJwcXJscS9zYW5kYm94L0V0S3BTVVVvWUtOMU95eWdHRGVMbHYtaW1hZ2VzXzE3NTE2MDU4NDQwMTRfbmExZm5fTDJodmJXVXZkV0oxYm5SMUwwcFNaVVJ6ZGpBMVdIRXhiZy53ZWJwIiwiQ29uZGl0aW9uIjp7IkRhdGVMZXNzVGhhbiI6eyJBV1M6RXBvY2hUaW1lIjoxNzk4NzYxNjAwfX19XX0_&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=u2v85TE0cHkHt3Z9qL55KVwkUgw6uP6dzYhhJr9AGsUWNAm~rkP3XHvWF38X8zc1Vi2MFcm0S~6FaQ9C6xxXGsaaMNqF6q9kG~2f8g36EVF7-iWaOXqSNz8Pl6aq-xR6LTofCg6QUq9khdzTIGYB59zDM1OA5friOXQOJSpmSNSfrVd8AKpeZwVP7TG~NIOb5wNvNM6KMsTpn6l-b2lpz9pOpT~9oi~px~XuC3E~jQugAj~g9kK0UvZyGVbgR8ohpMk71FycMXFeY4SW7-qMKmUnLmqJCgCmYnMEp0-6K05onLTM9oeEOFSLYcToORUYO8n~lWv87Z3VW10iRsFcsw__)
+![AI Agent Self-Driving Car Analogy]![image](https://github.com/user-attachments/assets/29cb0d51-a6a9-454a-9c72-914ae2418ef7)
+
 
 ## Technology Stack
 
