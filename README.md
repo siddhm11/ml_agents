@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](#license)
 
-**Turn any tabular dataset into a deployable machine‑learning model & narrative report** using a **graph of cooperating AI agents** built with **LangGraph** (often spelled “”).
+**Turn any tabular dataset into a deployable machine‑learning model & narrative report** using a **graph of cooperating AI agents** built with **LangGraph** .
 # AI Agent for Automated ML Analysis
 
 ## Overview
