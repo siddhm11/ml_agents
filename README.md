@@ -48,7 +48,7 @@
 
 ## What Are AI Agents?
 
-> *“An AI agent is a software which used any form of AI to perceive, reason and act towards solving a problem or moving closer to the goal.”*
+> *“An AI agent is an autonomous software entity that perceives its environment, reasons with artificial-intelligence techniques, and acts to move closer to its goal or solve a problem.”*
 
 Here, **each graph node *is* an agent**: it receives `AgentState`, performs a bounded task (often via an LLM), mutates the state, hands control to the next node.
 
