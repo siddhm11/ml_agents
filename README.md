@@ -16,8 +16,8 @@
 
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
-   cd <repository-name>
+   https://github.com/siddhm11/ml_agents.git
+   cd ml_agents
    ```
 
 2. **Create and activate virtual environment:**
