@@ -1450,7 +1450,7 @@ class TimeSeriesAgent(CSVMLAgent):
 # Usage example
 async def main():
     """Example usage of TimeSeriesAgent"""
-    agent = TimeSeriesAgent(groq_api_key="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")
+    agent = TimeSeriesAgent(groq_api_key="paste api key here")
     
     # Analyze time series data
     results = await agent.analyze_csv("agents/data-8013-trends-reduced.csv")
