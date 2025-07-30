@@ -35,27 +35,33 @@
    
    **Option A: Use your own API key**
    - Get your API key from [Groq Console](https://console.groq.com/)
-   - Set it as an environment variable:
-     ```bash
-     set GROQ_API_KEY=your_actual_api_key_here
-     ```
-   
-   **Option B: Use our testing key (limited usage)**
-   ```bash
-   set GROQ_API_KEY=gsk_hashed_demo_key_for_testing_only
-   ```
+   - Open the Python script for the agent you want to use:
+     - **mlc2.py (General Agent):** Find `agent = CSVMLAgent(groq_api_key="GROQ_API_KEY from link")`
+     - **reg.py (Regression Model):** Find `agent = RegressionSpecialistAgent(groq_api_key="//")`
+     - **classi.py (Classification Model):** Find `agent = ClassificationSpecialistAgent(groq_api_key="API")`
+     - **both.py (Dual Agent):** Find `analyzer = DualAgentAnalyzer(groq_api_key=GROQ_API_KEY)`
+     - **ts_pred.py (Time Series):** Find `agent = TimeSeriesAgent(groq_api_key="your_key_here")`
+   - Replace the placeholder with your actual API key
 
 ### Running the Agents
 
-**General ML Agent (Auto-detects problem type):**
-```bash
-python agents/mlc2.py
-```
+Choose which agent you want to use based on your problem type:
 
-**Specialized Agents:**
-- **Regression Agent:** `python agents/reg.py`
-- **Classification Agent:** `python agents/classi.py`
-- **Time Series Prediction:** `python agents/timepred.py`
+**Available Agents:**
+- **mlc2.py** - General ML Agent (auto-detects problem type)
+- **reg.py** - Regression Model Agent  
+- **classi.py** - Classification Model Agent
+- **ts_pred.py** - Time Series Classification Agent
+- **both.py** - Dual Agent Analyzer
+
+**Run Commands:**
+```bash
+python agents/mlc2.py      # General agent
+python agents/reg.py       # Regression specialist
+python agents/classi.py    # Classification specialist  
+python agents/ts_pred.py   # Time series agent
+python agents/both.py      # Dual agent analyzer depending on data
+```
 
 ---
 
@@ -138,7 +144,7 @@ Optimized specifically for regression tasks with specialized algorithms and eval
 ### 3. Classification Specialist Agent (`classi.py`)
 Tailored for classification problems with appropriate preprocessing and model selection.
 
-### 4. Time Series Prediction Agent (`timepred.py`)
+### 4. Time Series Prediction Agent (`ts_pred.py`)
 Specialized for temporal data analysis and forecasting tasks.
 
 ## Project Structure
@@ -148,7 +154,7 @@ agents/
 ├── mlc2.py          # Core CSVMLAgent class and LangGraph workflow
 ├── reg.py           # RegressionSpecialistAgent
 ├── classi.py        # ClassificationSpecialistAgent
-├── timepred.py      # Time Series Prediction Agent
+├── ts_pred.py      # Time Series Prediction Agent
 └── requirements.txt # Dependencies
 ```
 
