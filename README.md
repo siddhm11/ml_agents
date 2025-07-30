@@ -135,6 +135,8 @@ flowchart TD
     class A1,A2,A3,C2,E1 core
     class B1,C1,D1,D2,F1,G1 llm
     class B2 decision
+```
+
 # 🤖 CSV‑to‑Model Agent Pipeline
 
 [![CI](https://img.shields.io/badge/build-passing-brightgreen)](./.github/workflows/ci.yml)
