@@ -16,7 +16,7 @@
 
 1. **Clone the repository:**
    ```bash
-   https://github.com/siddhm11/ml_agents.git
+   git clone https://github.com/siddhm11/ml_agents.git
    cd ml_agents
    ```
 
